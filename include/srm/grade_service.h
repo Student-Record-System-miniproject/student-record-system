@@ -1,0 +1,87 @@
+#pragma once
+
+#include <filesystem>
+#include <functional>
+#include <string>
+#include <vector>
+
+namespace srm {
+
+enum class Role { Administrator, Teacher, Student };
+
+struct Session {
+    Role role;
+    bool authenticated;
+    std::string studentRollNumber;
+};
+
+enum class ErrorCode {
+    None,
+    AccessDenied,
+    InvalidInput,
+    StudentNotFound,
+    SubjectNotFound,
+    StorageFailure
+};
+
+struct OperationResult {
+    bool success;
+    ErrorCode error;
+    std::string message;
+};
+
+struct ReportResult {
+    bool success;
+    ErrorCode error;
+    std::string message;
+    std::string report;
+};
+
+struct MarkRecord {
+    std::string rollNumber;
+    std::string subject;
+    int semester;
+    int marks;
+};
+
+class GradeRepository {
+public:
+    explicit GradeRepository(std::filesystem::path filePath);
+
+    bool load();
+    bool save() const;
+    void upsert(MarkRecord record);
+    std::vector<MarkRecord> snapshot() const;
+    void restore(std::vector<MarkRecord> records);
+    const std::vector<MarkRecord>& records() const;
+
+private:
+    std::filesystem::path filePath_;
+    std::vector<MarkRecord> records_;
+};
+
+class GradeService {
+public:
+    using ExistsCheck = std::function<bool(const std::string&)>;
+
+    GradeService(std::filesystem::path gradeFile,
+                 ExistsCheck studentExists,
+                 ExistsCheck subjectExists);
+
+    OperationResult enterOrUpdateMarks(const Session& session,
+                                       const std::string& rollNumber,
+                                       const std::string& subject,
+                                       int semester,
+                                       const std::string& marksInput);
+
+    ReportResult generateReportCard(const Session& session,
+                                    const std::string& rollNumber) const;
+
+private:
+    GradeRepository repository_;
+    ExistsCheck studentExists_;
+    ExistsCheck subjectExists_;
+    bool storageReady_;
+};
+
+}  // namespace srm
