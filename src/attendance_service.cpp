@@ -1,4 +1,5 @@
 #include "srm/attendance_service.h"
+#include "srm/report_export.h"
 
 #include <fstream>
 #include <iomanip>
@@ -113,6 +114,13 @@ ReportResult AttendanceService::generateReport(
         report << '\n';
     }
     return {true, ErrorCode::None, "Attendance report generated.", report.str()};
+}
+
+OperationResult AttendanceService::exportReport(
+    const Session& session,
+    const std::string& rollNumber,
+    const std::filesystem::path& outputFile) const {
+    return exportTextReport(generateReport(session, rollNumber), outputFile);
 }
 
 }  // namespace srm

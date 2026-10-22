@@ -1,4 +1,5 @@
 #include "srm/grade_service.h"
+#include "srm/report_export.h"
 
 #include <charconv>
 #include <fstream>
@@ -165,6 +166,13 @@ ReportResult GradeService::generateReportCard(const Session& session,
         }
     }
     return {true, ErrorCode::None, "Report generated.", report.str()};
+}
+
+OperationResult GradeService::exportReportCard(
+    const Session& session,
+    const std::string& rollNumber,
+    const std::filesystem::path& outputFile) const {
+    return exportTextReport(generateReportCard(session, rollNumber), outputFile);
 }
 
 }  // namespace srm

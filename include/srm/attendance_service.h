@@ -48,6 +48,10 @@ public:
     ReportResult generateReport(const Session& session,
                                 const std::string& rollNumber) const;
 
+    OperationResult exportReport(const Session& session,
+                                 const std::string& rollNumber,
+                                 const std::filesystem::path& outputFile) const;
+
 private:
     AttendanceRepository repository_;
     ExistsCheck studentExists_;

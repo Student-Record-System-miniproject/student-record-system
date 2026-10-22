@@ -77,6 +77,10 @@ public:
     ReportResult generateReportCard(const Session& session,
                                     const std::string& rollNumber) const;
 
+    OperationResult exportReportCard(const Session& session,
+                                     const std::string& rollNumber,
+                                     const std::filesystem::path& outputFile) const;
+
 private:
     GradeRepository repository_;
     ExistsCheck studentExists_;
