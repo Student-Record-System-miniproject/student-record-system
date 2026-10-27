@@ -9,6 +9,7 @@ add_library(srm_grade
     src/grade_service.cpp
     src/attendance_service.cpp
     src/report_export.cpp
+    src/rbac.cpp
 )
 target_include_directories(srm_grade PUBLIC include)
 
@@ -27,7 +28,11 @@ target_link_libraries(attendance_service_tests PRIVATE srm_grade)
 add_executable(report_export_tests tests/report_export_tests.cpp)
 target_link_libraries(report_export_tests PRIVATE srm_grade)
 
+add_executable(rbac_tests tests/rbac_tests.cpp)
+target_link_libraries(rbac_tests PRIVATE srm_grade)
+
 enable_testing()
 add_test(NAME grade_service_tests COMMAND grade_service_tests)
 add_test(NAME attendance_service_tests COMMAND attendance_service_tests)
 add_test(NAME report_export_tests COMMAND report_export_tests)
+add_test(NAME rbac_tests COMMAND rbac_tests)

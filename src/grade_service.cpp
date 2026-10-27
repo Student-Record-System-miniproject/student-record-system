@@ -1,5 +1,6 @@
 #include "srm/grade_service.h"
 #include "srm/report_export.h"
+#include "srm/rbac.h"
 
 #include <charconv>
 #include <fstream>
@@ -110,9 +111,9 @@ OperationResult GradeService::enterOrUpdateMarks(
     const std::string& subject,
     int semester,
     const std::string& marksInput) {
-    if (!session.authenticated || session.role != Role::Teacher) {
-        return failure(ErrorCode::AccessDenied,
-                       "Only an authenticated teacher may enter marks.");
+    const auto auth = AccessController::authorize(session, Operation::EnterMarks);
+    if (!auth.success) {
+        return auth;
     }
     if (!storageReady_) {
         return failure(ErrorCode::StorageFailure, "Grade data could not be loaded.");
@@ -146,12 +147,12 @@ OperationResult GradeService::enterOrUpdateMarks(
 
 ReportResult GradeService::generateReportCard(const Session& session,
                                               const std::string& rollNumber) const {
-    if (!session.authenticated) {
-        return {false, ErrorCode::AccessDenied, "Authentication is required.", {}};
-    }
-    if (session.role == Role::Student && session.studentRollNumber != rollNumber) {
-        return {false, ErrorCode::AccessDenied,
-                "Students may view only their own report card.", {}};
+    const auto op = (session.role == Role::Student)
+                        ? Operation::ViewOwnReportCard
+                        : Operation::ViewAnyStudentReportCard;
+    const auto auth = AccessController::authorize(session, op, rollNumber);
+    if (!auth.success) {
+        return {false, auth.error, auth.message, {}};
     }
     if (!studentExists_ || !studentExists_(rollNumber)) {
         return {false, ErrorCode::StudentNotFound, "Student was not found.", {}};
