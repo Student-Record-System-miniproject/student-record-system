@@ -21,7 +21,9 @@ enum class ErrorCode {
     InvalidInput,
     StudentNotFound,
     SubjectNotFound,
-    StorageFailure
+    StorageFailure,
+    AccountLocked,
+    InvalidCredentials
 };
 
 struct OperationResult {

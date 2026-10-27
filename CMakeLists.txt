@@ -9,6 +9,7 @@ add_library(srm_grade
     src/report_export.cpp
     src/rbac.cpp
     src/student_service.cpp
+    src/auth_service.cpp
 )
 target_include_directories(srm_grade PUBLIC include)
 if (MSVC)
@@ -26,9 +27,12 @@ add_executable(rbac_tests tests/rbac_tests.cpp)
 target_link_libraries(rbac_tests PRIVATE srm_grade)
 add_executable(student_service_tests tests/student_service_tests.cpp)
 target_link_libraries(student_service_tests PRIVATE srm_grade)
+add_executable(auth_service_tests tests/auth_service_tests.cpp)
+target_link_libraries(auth_service_tests PRIVATE srm_grade)
 enable_testing()
 add_test(NAME grade_service_tests COMMAND grade_service_tests)
 add_test(NAME attendance_service_tests COMMAND attendance_service_tests)
 add_test(NAME report_export_tests COMMAND report_export_tests)
 add_test(NAME rbac_tests COMMAND rbac_tests)
 add_test(NAME student_service_tests COMMAND student_service_tests)
+add_test(NAME auth_service_tests COMMAND auth_service_tests)
