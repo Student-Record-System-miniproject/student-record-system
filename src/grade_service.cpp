@@ -2,6 +2,7 @@
 #include "srm/report_export.h"
 #include "srm/rbac.h"
 
+#include <algorithm>
 #include <charconv>
 #include <fstream>
 #include <sstream>
@@ -93,6 +94,18 @@ void GradeRepository::restore(std::vector<MarkRecord> records) {
     records_ = std::move(records);
 }
 
+bool GradeRepository::removeByRollNumber(const std::string& rollNumber) {
+    const auto initialSize = records_.size();
+    records_.erase(
+        std::remove_if(records_.begin(), records_.end(),
+                       [&](const MarkRecord& r) { return r.rollNumber == rollNumber; }),
+        records_.end());
+    if (records_.size() != initialSize) {
+        return save();
+    }
+    return true;
+}
+
 const std::vector<MarkRecord>& GradeRepository::records() const {
     return records_;
 }
@@ -174,6 +187,10 @@ OperationResult GradeService::exportReportCard(
     const std::string& rollNumber,
     const std::filesystem::path& outputFile) const {
     return exportTextReport(generateReportCard(session, rollNumber), outputFile);
+}
+
+bool GradeService::deleteStudentGrades(const std::string& rollNumber) {
+    return repository_.removeByRollNumber(rollNumber);
 }
 
 }  // namespace srm

@@ -31,6 +31,8 @@ public:
     explicit AttendanceRepository(std::filesystem::path filePath);
 
     bool load();
+    bool save() const;
+    bool removeByRollNumber(const std::string& rollNumber);
     const std::vector<AttendanceRecord>& records() const;
 
 private:
@@ -51,6 +53,8 @@ public:
     OperationResult exportReport(const Session& session,
                                  const std::string& rollNumber,
                                  const std::filesystem::path& outputFile) const;
+
+    bool deleteStudentAttendance(const std::string& rollNumber);
 
 private:
     AttendanceRepository repository_;

@@ -53,6 +53,7 @@ public:
     void upsert(MarkRecord record);
     std::vector<MarkRecord> snapshot() const;
     void restore(std::vector<MarkRecord> records);
+    bool removeByRollNumber(const std::string& rollNumber);
     const std::vector<MarkRecord>& records() const;
 
 private:
@@ -80,6 +81,8 @@ public:
     OperationResult exportReportCard(const Session& session,
                                      const std::string& rollNumber,
                                      const std::filesystem::path& outputFile) const;
+
+    bool deleteStudentGrades(const std::string& rollNumber);
 
 private:
     GradeRepository repository_;

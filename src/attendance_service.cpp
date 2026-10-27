@@ -2,6 +2,7 @@
 #include "srm/report_export.h"
 #include "srm/rbac.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -50,6 +51,31 @@ bool AttendanceRepository::load() {
             return false;
         }
         records_.push_back(std::move(record));
+    }
+    return true;
+}
+
+bool AttendanceRepository::save() const {
+    std::ofstream output(filePath_, std::ios::trunc);
+    if (!output) {
+        return false;
+    }
+    for (const AttendanceRecord& record : records_) {
+        output << record.rollNumber << '\t' << record.subject << '\t'
+               << record.date << '\t'
+               << (record.status == AttendanceStatus::Present ? "P" : "A") << '\n';
+    }
+    return output.good();
+}
+
+bool AttendanceRepository::removeByRollNumber(const std::string& rollNumber) {
+    const auto initialSize = records_.size();
+    records_.erase(
+        std::remove_if(records_.begin(), records_.end(),
+                       [&](const AttendanceRecord& r) { return r.rollNumber == rollNumber; }),
+        records_.end());
+    if (records_.size() != initialSize) {
+        return save();
     }
     return true;
 }
@@ -118,6 +144,10 @@ OperationResult AttendanceService::exportReport(
     const std::string& rollNumber,
     const std::filesystem::path& outputFile) const {
     return exportTextReport(generateReport(session, rollNumber), outputFile);
+}
+
+bool AttendanceService::deleteStudentAttendance(const std::string& rollNumber) {
+    return repository_.removeByRollNumber(rollNumber);
 }
 
 }  // namespace srm
