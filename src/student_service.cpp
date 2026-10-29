@@ -69,7 +69,11 @@ bool StudentRepository::add(StudentRecord student) {
         return false;
     }
     records_.push_back(std::move(student));
-    return save();
+    if (!save()) {
+        records_.pop_back();
+        return false;
+    }
+    return true;
 }
 
 bool StudentRepository::update(const std::string& rollNumber,
@@ -78,23 +82,33 @@ bool StudentRepository::update(const std::string& rollNumber,
                                const std::string& email) {
     for (StudentRecord& record : records_) {
         if (record.rollNumber == rollNumber) {
+            const auto oldRecord = record;
             record.name = name;
             record.department = department;
             record.email = email;
-            return save();
+            if (!save()) {
+                record = oldRecord;
+                return false;
+            }
+            return true;
         }
     }
     return false;
 }
 
 bool StudentRepository::remove(const std::string& rollNumber) {
+    const auto prevRecords = records_;
     const auto initialSize = records_.size();
     records_.erase(
         std::remove_if(records_.begin(), records_.end(),
                        [&](const StudentRecord& r) { return r.rollNumber == rollNumber; }),
         records_.end());
     if (records_.size() != initialSize) {
-        return save();
+        if (!save()) {
+            records_ = prevRecords;
+            return false;
+        }
+        return true;
     }
     return false;
 }
@@ -131,7 +145,7 @@ StudentService::StudentService(std::filesystem::path studentFile,
 
 OperationResult StudentService::addStudent(const Session& session,
                                            StudentRecord student) {
-    const auto auth = AccessController::authorize(session, Operation::UpdateStudent);
+    const auto auth = AccessController::authorize(session, Operation::AddStudent);
     if (!auth.success) {
         return auth;
     }
@@ -142,8 +156,11 @@ OperationResult StudentService::addStudent(const Session& session,
         !validField(student.department) || !validField(student.email)) {
         return {false, ErrorCode::InvalidInput, "All student fields must be non-empty."};
     }
+    if (repository_.findByRollNumber(student.rollNumber) != nullptr) {
+        return {false, ErrorCode::DuplicateRecord, "Student with this roll number already exists."};
+    }
     if (!repository_.add(std::move(student))) {
-        return {false, ErrorCode::InvalidInput, "Duplicate roll number or save failure."};
+        return {false, ErrorCode::StorageFailure, "Failed to save student record to storage."};
     }
     return {true, ErrorCode::None, "Student record created."};
 }
@@ -184,9 +201,11 @@ OperationResult StudentService::deleteStudent(const Session& session,
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "Student storage is not ready."};
     }
-    if (repository_.findByRollNumber(rollNumber) == nullptr) {
+    const auto* existing = repository_.findByRollNumber(rollNumber);
+    if (existing == nullptr) {
         return {false, ErrorCode::StudentNotFound, "Student record not found."};
     }
+    const auto studentSnapshot = *existing;
 
     // Explicit confirmation check (SRM-F-013, TC-STU-03)
     if (confirmation != "Y" && confirmation != "y") {
@@ -194,12 +213,17 @@ OperationResult StudentService::deleteStudent(const Session& session,
     }
 
     if (!repository_.remove(rollNumber)) {
-        return {false, ErrorCode::StorageFailure, "Failed to delete student record."};
+        return {false, ErrorCode::StorageFailure, "Failed to delete student record from storage."};
     }
 
     // Cascade deletion: remove student's grades and attendance
     if (cascadeDelete_) {
-        cascadeDelete_(rollNumber);
+        if (!cascadeDelete_(rollNumber)) {
+            // Rollback student deletion if cascade fails
+            repository_.add(studentSnapshot);
+            return {false, ErrorCode::StorageFailure,
+                    "Cascade deletion of associated records failed. Operation rolled back."};
+        }
     }
 
     return {true, ErrorCode::None, "Student record and associated records deleted."};

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "srm/grade_service.h"
+#include "srm/common_types.h"
 
 #include <functional>
 #include <string>
@@ -9,11 +9,13 @@
 namespace srm {
 
 enum class Operation {
-    // Administrator operations (SRM-SR-002, SRM-F-040, SRM-SR-003, SRM-F-012, SRM-F-013, SRM-F-041, SRM-F-042, SRM-F-044)
-    ManageUsers,
-    UnlockAccount,
+    // Administrator operations (SRM-SR-002, SRM-F-010, SRM-F-012, SRM-F-013, SRM-F-040, SRM-SR-003, SRM-F-041, SRM-F-042, SRM-F-044)
+    AddStudent,
     UpdateStudent,
     DeleteStudent,
+    RegisterUser,
+    ManageUsers,
+    UnlockAccount,
     BackupData,
     RestoreData,
     ViewAuditLogs,

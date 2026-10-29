@@ -1,43 +1,13 @@
 #pragma once
 
+#include "srm/common_types.h"
+
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
 
 namespace srm {
-
-enum class Role { Administrator, Teacher, Student };
-
-struct Session {
-    Role role;
-    bool authenticated;
-    std::string studentRollNumber;
-};
-
-enum class ErrorCode {
-    None,
-    AccessDenied,
-    InvalidInput,
-    StudentNotFound,
-    SubjectNotFound,
-    StorageFailure,
-    AccountLocked,
-    InvalidCredentials
-};
-
-struct OperationResult {
-    bool success;
-    ErrorCode error;
-    std::string message;
-};
-
-struct ReportResult {
-    bool success;
-    ErrorCode error;
-    std::string message;
-    std::string report;
-};
 
 struct MarkRecord {
     std::string rollNumber;

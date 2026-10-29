@@ -1,6 +1,7 @@
 #pragma once
 
-#include "srm/grade_service.h"
+#include "srm/common_types.h"
+#include "srm/crypto.h"
 #include "srm/rbac.h"
 
 #include <filesystem>
@@ -11,7 +12,7 @@ namespace srm {
 
 struct UserAccount {
     std::string username;
-    std::string password;
+    std::string passwordHash;
     Role role;
     int failedAttempts = 0;
     bool isLocked = false;
@@ -43,10 +44,17 @@ private:
 
 class AuthService {
 public:
-    explicit AuthService(std::filesystem::path userFile);
+    explicit AuthService(std::filesystem::path userFile,
+                         unsigned int hashIterations = 10000);
 
-    // Register a new user account (Administrator or initial setup)
-    OperationResult registerUser(const std::string& username,
+    // Initial setup mechanism: creates the first Administrator account.
+    // Allowed only when no user accounts exist in the repository.
+    OperationResult setupInitialAdmin(const std::string& username,
+                                      const std::string& password);
+
+    // SRM-SR-002: User registration requires an Administrator session (Operation::RegisterUser)
+    OperationResult registerUser(const Session& adminSession,
+                                 const std::string& username,
                                  const std::string& password,
                                  Role role,
                                  const std::string& studentRollNumber = "");
@@ -64,13 +72,14 @@ public:
     // - Resets failed attempts to 0 and unlocks account
     // - Persists unlocked state
     OperationResult unlockAccount(const Session& adminSession,
-                                 const std::string& username);
+                                  const std::string& username);
 
     bool isAccountLocked(const std::string& username) const;
     int getFailedAttempts(const std::string& username) const;
 
 private:
     UserRepository repository_;
+    unsigned int hashIterations_;
     bool storageReady_;
 };
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "srm/grade_service.h"
+#include "srm/common_types.h"
 #include "srm/rbac.h"
 
 #include <filesystem>
@@ -40,7 +40,7 @@ private:
 
 class StudentService {
 public:
-    using CascadeDeleteHook = std::function<void(const std::string& rollNumber)>;
+    using CascadeDeleteHook = std::function<bool(const std::string& rollNumber)>;
 
     explicit StudentService(std::filesystem::path studentFile,
                             CascadeDeleteHook cascadeDelete = nullptr);

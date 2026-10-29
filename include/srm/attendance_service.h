@@ -1,6 +1,6 @@
 #pragma once
 
-#include "srm/grade_service.h"
+#include "srm/common_types.h"
 
 #include <filesystem>
 #include <functional>

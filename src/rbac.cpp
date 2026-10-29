@@ -17,10 +17,12 @@ bool AccessController::isAuthorized(const Session& session,
     switch (session.role) {
         case Role::Administrator:
             switch (operation) {
-                case Operation::ManageUsers:
-                case Operation::UnlockAccount:
+                case Operation::AddStudent:
                 case Operation::UpdateStudent:
                 case Operation::DeleteStudent:
+                case Operation::RegisterUser:
+                case Operation::ManageUsers:
+                case Operation::UnlockAccount:
                 case Operation::BackupData:
                 case Operation::RestoreData:
                 case Operation::ViewAuditLogs:

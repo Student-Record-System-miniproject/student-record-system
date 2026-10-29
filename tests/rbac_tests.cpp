@@ -23,10 +23,12 @@ void testAdministratorPermissions() {
 
     // Permitted administrator operations
     const std::vector<Operation> permittedAdminOps = {
-        Operation::ManageUsers,
-        Operation::UnlockAccount,
+        Operation::AddStudent,
         Operation::UpdateStudent,
         Operation::DeleteStudent,
+        Operation::RegisterUser,
+        Operation::ManageUsers,
+        Operation::UnlockAccount,
         Operation::BackupData,
         Operation::RestoreData,
         Operation::ViewAuditLogs
@@ -81,11 +83,14 @@ void testTeacherPermissions() {
         assert(result.error == ErrorCode::None);
     }
 
-    // Teacher forbidden from user administration and system controls
+    // Teacher forbidden from student creation/modification, user administration, and system controls
     const std::vector<Operation> forbiddenTeacherOps = {
+        Operation::AddStudent,
+        Operation::UpdateStudent,
+        Operation::DeleteStudent,
+        Operation::RegisterUser,
         Operation::ManageUsers,
         Operation::UnlockAccount,
-        Operation::DeleteStudent,
         Operation::BackupData,
         Operation::RestoreData
     };
@@ -122,13 +127,16 @@ void testStudentPermissions() {
     assert(!peerReportCheck.success);
     assert(peerReportCheck.error == ErrorCode::AccessDenied);
 
-    // Student forbidden from academic grading and administration
+    // Student forbidden from student management, academic grading, and user administration
     const std::vector<Operation> forbiddenStudentOps = {
+        Operation::AddStudent,
+        Operation::UpdateStudent,
+        Operation::DeleteStudent,
+        Operation::RegisterUser,
         Operation::EnterMarks,
         Operation::UpdateMarks,
         Operation::MarkAttendance,
-        Operation::ManageUsers,
-        Operation::DeleteStudent
+        Operation::ManageUsers
     };
 
     for (const auto op : forbiddenStudentOps) {

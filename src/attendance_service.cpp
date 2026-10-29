@@ -69,13 +69,17 @@ bool AttendanceRepository::save() const {
 }
 
 bool AttendanceRepository::removeByRollNumber(const std::string& rollNumber) {
+    const auto prevRecords = records_;
     const auto initialSize = records_.size();
     records_.erase(
         std::remove_if(records_.begin(), records_.end(),
                        [&](const AttendanceRecord& r) { return r.rollNumber == rollNumber; }),
         records_.end());
     if (records_.size() != initialSize) {
-        return save();
+        if (!save()) {
+            records_ = prevRecords;
+            return false;
+        }
     }
     return true;
 }

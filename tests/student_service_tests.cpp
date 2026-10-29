@@ -82,7 +82,10 @@ void testDeleteRequiresConfirmationAndCanCancel() {
     std::filesystem::remove(path);
 
     bool cascadeTriggered = false;
-    StudentService service(path, [&](const std::string&) { cascadeTriggered = true; });
+    StudentService service(path, [&](const std::string&) {
+        cascadeTriggered = true;
+        return true;
+    });
 
     service.addStudent(adminSession, {"S101", "Alice Smith", "CSE", "alice@test.edu"});
 
@@ -124,8 +127,9 @@ void testDeleteWithConfirmationRemovesStudentAndCascades() {
     assert(gradeService.generateReportCard(teacherSession, "S101").report.find("Marks 95") != std::string::npos);
 
     StudentService studentService(studentPath, [&](const std::string& roll) {
-        gradeService.deleteStudentGrades(roll);
-        attService.deleteStudentAttendance(roll);
+        bool gOk = gradeService.deleteStudentGrades(roll);
+        bool aOk = attService.deleteStudentAttendance(roll);
+        return gOk && aOk;
     });
 
     studentService.addStudent(adminSession, {"S101", "Alice Smith", "CSE", "alice@test.edu"});
@@ -177,6 +181,61 @@ void testDeleteRoleRestrictions() {
     std::filesystem::remove(path);
 }
 
+void testAddStudentRbacAndDuplicates() {
+    const auto path = std::filesystem::temp_directory_path() / "srm-student-add-dup.tsv";
+    std::filesystem::remove(path);
+
+    StudentService service(path);
+
+    // Teacher cannot add students (RBAC Operation::AddStudent)
+    const auto teacherAdd = service.addStudent(teacherSession, {"S201", "Bob", "ECE", "bob@test.edu"});
+    assert(!teacherAdd.success);
+    assert(teacherAdd.error == ErrorCode::AccessDenied);
+
+    // Student cannot add students
+    const auto studentAdd = service.addStudent(studentSession, {"S201", "Bob", "ECE", "bob@test.edu"});
+    assert(!studentAdd.success);
+    assert(studentAdd.error == ErrorCode::AccessDenied);
+
+    // Administrator adds student successfully
+    const auto adminAdd = service.addStudent(adminSession, {"S201", "Bob", "ECE", "bob@test.edu"});
+    assert(adminAdd.success);
+    assert(adminAdd.error == ErrorCode::None);
+
+    // Adding duplicate roll number returns ErrorCode::DuplicateRecord
+    const auto dupAdd = service.addStudent(adminSession, {"S201", "Robert", "ECE", "robert@test.edu"});
+    assert(!dupAdd.success);
+    assert(dupAdd.error == ErrorCode::DuplicateRecord);
+
+    std::filesystem::remove(path);
+}
+
+void testCascadeFailureRollsBackStudentDeletion() {
+    const auto path = std::filesystem::temp_directory_path() / "srm-student-cascade-fail.tsv";
+    std::filesystem::remove(path);
+
+    // Set up cascade hook that simulates storage failure
+    StudentService service(path, [](const std::string&) {
+        return false;  // Failure during cascade
+    });
+
+    assert(service.addStudent(adminSession, {"S301", "Charlie", "ME", "charlie@test.edu"}).success);
+    assert(service.exists("S301"));
+
+    // Attempt delete with confirmation: cascade hook returns false
+    const auto deleteResult = service.deleteStudent(adminSession, "S301", "Y");
+    assert(!deleteResult.success);
+    assert(deleteResult.error == ErrorCode::StorageFailure);
+
+    // Transactional consistency: Student S301 must NOT be deleted (rolled back)
+    assert(service.exists("S301"));
+    const auto* record = service.getStudent(adminSession, "S301");
+    assert(record != nullptr);
+    assert(record->name == "Charlie");
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -185,5 +244,7 @@ int main() {
     testDeleteRequiresConfirmationAndCanCancel();
     testDeleteWithConfirmationRemovesStudentAndCascades();
     testDeleteRoleRestrictions();
+    testAddStudentRbacAndDuplicates();
+    testCascadeFailureRollsBackStudentDeletion();
     return 0;
 }

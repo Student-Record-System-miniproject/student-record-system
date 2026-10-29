@@ -8,34 +8,6 @@
 namespace srm {
 namespace {
 
-std::string roleToString(Role role) {
-    switch (role) {
-        case Role::Administrator:
-            return "Admin";
-        case Role::Teacher:
-            return "Teacher";
-        case Role::Student:
-            return "Student";
-    }
-    return "Student";
-}
-
-bool stringToRole(const std::string& str, Role& role) {
-    if (str == "Admin") {
-        role = Role::Administrator;
-        return true;
-    }
-    if (str == "Teacher") {
-        role = Role::Teacher;
-        return true;
-    }
-    if (str == "Student") {
-        role = Role::Student;
-        return true;
-    }
-    return false;
-}
-
 bool parseInteger(const std::string& input, int& value) {
     if (input.empty()) {
         return false;
@@ -71,7 +43,7 @@ bool UserRepository::load() {
         std::string failedAttemptsStr;
         std::string isLockedStr;
         if (!std::getline(row, user.username, '\t') ||
-            !std::getline(row, user.password, '\t') ||
+            !std::getline(row, user.passwordHash, '\t') ||
             !std::getline(row, roleStr, '\t') ||
             !std::getline(row, failedAttemptsStr, '\t') ||
             !std::getline(row, isLockedStr, '\t') ||
@@ -93,7 +65,7 @@ bool UserRepository::save() const {
         return false;
     }
     for (const UserAccount& user : users_) {
-        output << user.username << '\t' << user.password << '\t'
+        output << user.username << '\t' << user.passwordHash << '\t'
                << roleToString(user.role) << '\t' << user.failedAttempts << '\t'
                << (user.isLocked ? "1" : "0") << '\t'
                << user.studentRollNumber << '\n';
@@ -106,7 +78,11 @@ bool UserRepository::addUser(UserAccount user) {
         return false;
     }
     users_.push_back(std::move(user));
-    return save();
+    if (!save()) {
+        users_.pop_back();
+        return false;
+    }
+    return true;
 }
 
 UserAccount* UserRepository::findUser(const std::string& username) {
@@ -131,23 +107,53 @@ const std::vector<UserAccount>& UserRepository::users() const {
     return users_;
 }
 
-AuthService::AuthService(std::filesystem::path userFile)
+AuthService::AuthService(std::filesystem::path userFile, unsigned int hashIterations)
     : repository_(std::move(userFile)),
+      hashIterations_(hashIterations),
       storageReady_(repository_.load()) {}
 
-OperationResult AuthService::registerUser(const std::string& username,
+OperationResult AuthService::setupInitialAdmin(const std::string& username,
+                                              const std::string& password) {
+    if (!storageReady_) {
+        return {false, ErrorCode::StorageFailure, "User storage is not ready."};
+    }
+    if (!validField(username) || !validField(password)) {
+        return {false, ErrorCode::InvalidInput, "Username and password must be non-empty and valid."};
+    }
+    if (!repository_.users().empty()) {
+        return {false, ErrorCode::AccessDenied,
+                "Initial administrator setup is disabled because accounts already exist."};
+    }
+    std::string hashedPassword = Crypto::hashPassword(password, "", hashIterations_);
+    UserAccount adminUser{username, std::move(hashedPassword), Role::Administrator, 0, false, ""};
+    if (!repository_.addUser(std::move(adminUser))) {
+        return {false, ErrorCode::StorageFailure, "Failed to persist initial administrator account."};
+    }
+    return {true, ErrorCode::None, "Initial administrator created successfully."};
+}
+
+OperationResult AuthService::registerUser(const Session& adminSession,
+                                          const std::string& username,
                                           const std::string& password,
                                           Role role,
                                           const std::string& studentRollNumber) {
-    if (!validField(username) || !validField(password)) {
-        return {false, ErrorCode::InvalidInput, "Username and password must be non-empty."};
+    const auto auth = AccessController::authorize(adminSession, Operation::RegisterUser);
+    if (!auth.success) {
+        return auth;
     }
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "User storage is not ready."};
     }
-    UserAccount user{username, password, role, 0, false, studentRollNumber};
+    if (!validField(username) || !validField(password)) {
+        return {false, ErrorCode::InvalidInput, "Username and password must be non-empty and valid."};
+    }
+    if (repository_.findUser(username) != nullptr) {
+        return {false, ErrorCode::DuplicateRecord, "User with this username already exists."};
+    }
+    std::string hashedPassword = Crypto::hashPassword(password, "", hashIterations_);
+    UserAccount user{username, std::move(hashedPassword), role, 0, false, studentRollNumber};
     if (!repository_.addUser(std::move(user))) {
-        return {false, ErrorCode::InvalidInput, "Username already exists or save failed."};
+        return {false, ErrorCode::StorageFailure, "Failed to persist user to storage."};
     }
     return {true, ErrorCode::None, "User registered successfully."};
 }
@@ -169,23 +175,40 @@ LoginResult AuthService::login(const std::string& username,
                 "Account is locked due to repeated failed login attempts. Contact an Administrator to unlock.", {}};
     }
 
-    if (user->password != password) {
+    if (!Crypto::verifyPassword(password, user->passwordHash)) {
+        int prevFailed = user->failedAttempts;
+        bool prevLocked = user->isLocked;
+
         user->failedAttempts++;
         if (user->failedAttempts >= 3) {
             user->isLocked = true;
-            repository_.save();
+        }
+
+        if (!repository_.save()) {
+            // Roll back in-memory modification on storage failure
+            user->failedAttempts = prevFailed;
+            user->isLocked = prevLocked;
+            return {false, ErrorCode::StorageFailure, "Failed to persist login attempt state.", {}};
+        }
+
+        if (user->isLocked) {
             return {false, ErrorCode::AccountLocked,
                     "Account locked after 3 consecutive failed login attempts.", {}};
         }
-        repository_.save();
         return {false, ErrorCode::InvalidCredentials, "Invalid username or password.", {}};
     }
 
-    // Password correct: reset failed attempts and log in
-    user->failedAttempts = 0;
-    repository_.save();
+    // Password correct: reset failed attempts if needed
+    if (user->failedAttempts > 0) {
+        int prevFailed = user->failedAttempts;
+        user->failedAttempts = 0;
+        if (!repository_.save()) {
+            user->failedAttempts = prevFailed;
+            return {false, ErrorCode::StorageFailure, "Failed to persist login session state.", {}};
+        }
+    }
 
-    Session session{user->role, true, user->studentRollNumber};
+    Session session{user->role, true, user->studentRollNumber, user->username};
     return {true, ErrorCode::None, "Login successful.", session};
 }
 
@@ -205,9 +228,14 @@ OperationResult AuthService::unlockAccount(const Session& adminSession,
         return {false, ErrorCode::StudentNotFound, "User account not found."};
     }
 
+    bool prevLocked = user->isLocked;
+    int prevFailed = user->failedAttempts;
+
     user->isLocked = false;
     user->failedAttempts = 0;
     if (!repository_.save()) {
+        user->isLocked = prevLocked;
+        user->failedAttempts = prevFailed;
         return {false, ErrorCode::StorageFailure, "Failed to save unlocked user state."};
     }
 
