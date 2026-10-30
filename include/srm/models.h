@@ -14,6 +14,12 @@ struct Student {
 
 struct User {
     std::string username;
+    std::string password;
+    std::string role;
+};
+
+struct Session {
+    std::string userId;
     std::string role;
 };
 

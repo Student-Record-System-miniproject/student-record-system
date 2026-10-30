@@ -10,6 +10,7 @@ include_directories(include)
 
 add_library(srm_core
     src/file_repository.cpp
+    src/auth_manager.cpp
 )
 
 add_executable(student_record_system
@@ -33,4 +34,17 @@ target_link_libraries(file_repository_tests
 add_test(
     NAME FileRepositoryTests
     COMMAND file_repository_tests
+)
+
+add_executable(auth_manager_tests
+    tests/auth_manager_tests.cpp
+)
+
+target_link_libraries(auth_manager_tests
+    PRIVATE srm_core
+)
+
+add_test(
+    NAME AuthManagerTests
+    COMMAND auth_manager_tests
 )

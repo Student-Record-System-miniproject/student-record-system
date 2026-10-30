@@ -17,8 +17,8 @@ int main() {
     };
 
     std::vector<srm::User> users = {
-        {"admin", "ADMIN"},
-        {"teacher1", "TEACHER"}
+        {"admin", "admin123", "ADMIN"},
+        {"teacher1", "teacher123", "TEACHER"}
     };
 
     assert(repository.saveStudents(students));
@@ -37,7 +37,11 @@ int main() {
     assert(loadedStudents[0].name == "Alice");
 
     assert(loadedUsers[0].username == "admin");
-    assert(loadedUsers[0].role == "ADMIN");
+    assert(loadedUsers[0].password == "admin123");
+    assert(loadedUsers[0].role == "ADMIN"); 
+    assert(loadedUsers[1].username == "teacher1");
+    assert(loadedUsers[1].password == "teacher123");
+    assert(loadedUsers[1].role == "TEACHER");
 
     std::filesystem::remove_all(testDirectory);
 

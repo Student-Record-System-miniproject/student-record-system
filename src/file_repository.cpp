@@ -93,6 +93,7 @@ bool FileRepository::saveUsers(
 
     for (const auto& user : users) {
         file << user.username << "|"
+             << user.password << "|"
              << user.role << "\n";
     }
 
@@ -117,15 +118,23 @@ bool FileRepository::loadUsers(
             continue;
         }
 
-        std::size_t separator = line.find('|');
+        std::size_t first = line.find('|');
+        std::size_t second = line.find('|', first + 1);
 
-        if (separator == std::string::npos) {
+        if (first == std::string::npos ||
+            second == std::string::npos) {
             return false;
         }
 
         User user;
-        user.username = line.substr(0, separator);
-        user.role = line.substr(separator + 1);
+
+        user.username = line.substr(0, first);
+
+        user.password = line.substr(
+            first + 1,
+            second - first - 1);
+
+        user.role = line.substr(second + 1);
 
         users.push_back(user);
     }
