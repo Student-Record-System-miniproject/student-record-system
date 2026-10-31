@@ -1,4 +1,5 @@
 #include "srm/common_types.h"
+#include <chrono>
 
 namespace srm {
 
@@ -28,6 +29,17 @@ bool stringToRole(const std::string& str, Role& role) {
         return true;
     }
     return false;
+}
+
+bool isSessionExpired(const Session& session) {
+    if (!session.authenticated) {
+        return true;
+    }
+
+    const auto elapsed =
+        std::chrono::steady_clock::now() - session.lastActivity;
+
+    return elapsed >= std::chrono::minutes(5);
 }
 
 std::string errorCodeToString(ErrorCode code) {

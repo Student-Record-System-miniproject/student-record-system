@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <string>
 
 namespace srm {
@@ -15,7 +16,10 @@ struct Session {
     bool authenticated = false;
     std::string studentRollNumber = "";
     std::string username = "";
+    std::chrono::steady_clock::time_point lastActivity;
 };
+
+bool isSessionExpired(const Session& session);
 
 enum class ErrorCode {
     None,
