@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <chrono>
 
 namespace {
 
@@ -250,6 +251,24 @@ void testCryptoPBKDF2Verification() {
     assert(!Crypto::verifyPassword(password, "sha256$100$salt$hash"));
 }
 
+void testSessionTimeout() {
+    Session session;
+    session.authenticated = true;
+
+    // Session inactive for more than 5 minutes -> must expire
+    session.lastActivity =
+        std::chrono::steady_clock::now() - std::chrono::minutes(6);
+    assert(srm::isSessionExpired(session));
+
+    // Recently active session -> must remain valid
+    session.lastActivity = std::chrono::steady_clock::now();
+    assert(!srm::isSessionExpired(session));
+
+    // Unauthenticated session -> must be considered expired
+    session.authenticated = false;
+    assert(srm::isSessionExpired(session));
+}
+
 }  // namespace
 
 int main() {
@@ -260,5 +279,6 @@ int main() {
     testInitialAdminSetupAndUserRegistrationAuthorization();
     testPasswordHashingAndSecureStorage();
     testCryptoPBKDF2Verification();
+    testSessionTimeout();
     return 0;
 }
