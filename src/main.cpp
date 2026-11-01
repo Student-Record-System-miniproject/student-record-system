@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string>
+#include <chrono>
 
 void displayMenu(const srm::Session& session) {
     std::cout << "\nLogin successful.\n";
@@ -32,25 +33,45 @@ void displayMenu(const srm::Session& session) {
 int main() {
     srm::AuthService authService("data/users.txt");
 
-    std::string username;
-    std::string password;
+    while (true) {
+        std::string username;
+        std::string password;
 
-    std::cout << "Student Record System\n";
-    std::cout << "Username: ";
-    std::cin >> username;
+        std::cout << "\nStudent Record System\n";
+        std::cout << "Username: ";
+        std::cin >> username;
 
-    std::cout << "Password: ";
-    std::cin >> password;
+        std::cout << "Password: ";
+        std::cin >> password;
 
-    srm::LoginResult result = authService.login(username, password);
+        srm::LoginResult result = authService.login(username, password);
 
-    if (!result.success) {
-        std::cout << "\n" << result.message << "\n";
-        std::cout << "Login failed.\n";
-        return 1;
+        if (!result.success) {
+            std::cout << "\n" << result.message << "\n";
+            std::cout << "Login failed.\n";
+            return 1;
+        }
+
+        srm::Session session = result.session;
+        displayMenu(session);
+
+        while (session.authenticated) {
+            std::cout << "\nEnter your choice: ";
+
+            std::string choice;
+            std::cin >> choice;
+
+            if (srm::isSessionExpired(session)) {
+                session.authenticated = false;
+                std::cout << "\nSession expired due to 5 minutes of inactivity.\n";
+                std::cout << "Please log in again.\n";
+                break;
+            }
+
+            std::cout << "Action " << choice << " selected.\n";
+            session.lastActivity = std::chrono::steady_clock::now();
+        }
     }
-
-    displayMenu(result.session);
 
     return 0;
 }

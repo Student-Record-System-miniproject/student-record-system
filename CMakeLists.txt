@@ -8,7 +8,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(srm_core
     src/common_types.cpp
     src/crypto.cpp
-    src/file_repository.cpp
     src/grade_service.cpp
     src/attendance_service.cpp
     src/report_export.cpp
@@ -65,10 +64,6 @@ add_executable(auth_service_tests
 )
 target_link_libraries(auth_service_tests PRIVATE srm_core)
 
-add_executable(file_repository_tests
-    tests/file_repository_tests.cpp
-)
-target_link_libraries(file_repository_tests PRIVATE srm_core)
 
 enable_testing()
 
@@ -78,4 +73,3 @@ add_test(NAME report_export_tests COMMAND report_export_tests)
 add_test(NAME rbac_tests COMMAND rbac_tests)
 add_test(NAME student_service_tests COMMAND student_service_tests)
 add_test(NAME auth_service_tests COMMAND auth_service_tests)
-add_test(NAME FileRepositoryTests COMMAND file_repository_tests)

@@ -1,6 +1,7 @@
 #include "srm/auth_service.h"
 
 #include <charconv>
+#include <chrono>
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -208,7 +209,8 @@ LoginResult AuthService::login(const std::string& username,
         }
     }
 
-    Session session{user->role, true, user->studentRollNumber, user->username};
+    Session session{user->role, true, user->studentRollNumber, user->username,
+                std::chrono::steady_clock::now()};
     return {true, ErrorCode::None, "Login successful.", session};
 }
 
