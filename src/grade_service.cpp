@@ -1,6 +1,7 @@
 #include "srm/grade_service.h"
 #include "srm/report_export.h"
 #include "srm/rbac.h"
+#include "srm/storage_utils.h"
 
 #include <algorithm>
 #include <charconv>
@@ -63,15 +64,13 @@ bool GradeRepository::load() {
 }
 
 bool GradeRepository::save() const {
-    std::ofstream output(filePath_, std::ios::trunc);
-    if (!output) {
-        return false;
-    }
-    for (const MarkRecord& record : records_) {
-        output << record.rollNumber << '\t' << record.subject << '\t'
-               << record.semester << '\t' << record.marks << '\n';
-    }
-    return output.good();
+    return atomicWriteFile(filePath_, [&](std::ostream& output) {
+        for (const MarkRecord& record : records_) {
+            output << record.rollNumber << '\t' << record.subject << '\t'
+                   << record.semester << '\t' << record.marks << '\n';
+        }
+        return output.good();
+    });
 }
 
 void GradeRepository::upsert(MarkRecord record) {
