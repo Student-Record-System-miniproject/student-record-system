@@ -17,7 +17,7 @@ using srm::StudentRepository;
 using srm::UserAccount;
 using srm::UserRepository;
 
-// TC-Rel-01: Verify crash-safe saving and data integrity after forced termination
+// TC-Rel-01: Verify crash-safe saving and data integrity after forced termination / write failure
 void testAtomicWriteAndForcedInterruption() {
     const auto dir = std::filesystem::temp_directory_path() / "srm_crash_safe_test";
     std::filesystem::remove_all(dir);
@@ -38,15 +38,15 @@ void testAtomicWriteAndForcedInterruption() {
         assert(content == initialData);
     }
 
-    // Step 2: Simulate interrupted write (crash or forced termination midway)
-    // The writer begins writing corrupted/partial data, but fails/terminates
+    // Step 2: Simulate interrupted write (crash or forced termination midway during stream writing)
+    // The writer begins writing partial data, but terminates/aborts before completing
     const bool interruptedSuccess = atomicWriteFile(targetFile, [](std::ostream& out) {
         out << "PARTIAL_GARBAGE_DATA_FROM_CRASHED_PROCESS";
         return false;  // Simulates failure / forced termination
     });
     assert(!interruptedSuccess);
 
-    // Step 3: Verify target file was NOT corrupted by the failed operation
+    // Step 3: Verify target file was NOT corrupted or altered by the failed operation
     {
         std::ifstream in(targetFile);
         std::string content((std::istreambuf_iterator<char>(in)),
@@ -58,6 +58,33 @@ void testAtomicWriteAndForcedInterruption() {
     // Step 4: Verify no leftover temporary files in directory
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         assert(entry.path().filename() == "data.txt");
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+void testOriginalFilePreservedWhenReplacementFails() {
+    const auto dir = std::filesystem::temp_directory_path() / "srm_crash_safe_fail_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    const auto targetFile = dir / "important_data.txt";
+    const std::string originalData = "IMPORTANT_ORIGINAL_DATA_MUST_NEVER_BE_LOST\n";
+    assert(atomicWriteString(targetFile, originalData));
+
+    // Simulate an aborted save before file swap completes
+    const bool res = atomicWriteFile(targetFile, [](std::ostream&) {
+        // Simulates an unhandled error or exception in user data serialization
+        return false;
+    });
+    assert(!res);
+
+    // The original file MUST still exist with 100% of its original content intact
+    {
+        std::ifstream in(targetFile);
+        std::string content((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+        assert(content == originalData);
     }
 
     std::filesystem::remove_all(dir);
@@ -130,6 +157,7 @@ void testUserRepositoryCrashSafeSaving() {
 
 int main() {
     testAtomicWriteAndForcedInterruption();
+    testOriginalFilePreservedWhenReplacementFails();
     testStudentRepositoryCrashSafeRestart();
     testUserRepositoryCrashSafeSaving();
     return 0;
