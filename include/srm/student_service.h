@@ -10,6 +10,8 @@
 
 namespace srm {
 
+class AuditService;
+
 struct StudentRecord {
     std::string rollNumber;
     std::string name;
@@ -75,10 +77,14 @@ public:
 
     bool exists(const std::string& rollNumber) const;
 
+    void setAuditService(AuditService* auditService);
+    AuditService* auditService() const;
+
 private:
     StudentRepository repository_;
     CascadeDeleteHook cascadeDelete_;
     bool storageReady_;
+    AuditService* auditService_ = nullptr;
 };
 
 }  // namespace srm

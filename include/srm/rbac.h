@@ -42,6 +42,7 @@ struct SecurityEvent {
     std::string targetResource;
     bool authorized;
     std::string reason;
+    std::string username = "";
 };
 
 using SecurityEventLogger = std::function<void(const SecurityEvent&)>;

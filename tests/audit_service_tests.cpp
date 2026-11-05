@@ -1,5 +1,7 @@
 #include "srm/audit_service.h"
+#include "srm/auth_service.h"
 #include "srm/rbac.h"
+#include "srm/student_service.h"
 
 #include <cassert>
 #include <filesystem>
@@ -11,10 +13,13 @@ namespace {
 using srm::AccessController;
 using srm::AuditEntry;
 using srm::AuditService;
+using srm::AuthService;
 using srm::Operation;
 using srm::Role;
 using srm::SecurityEvent;
 using srm::Session;
+using srm::StudentRecord;
+using srm::StudentService;
 
 // TC-Adm-03: Verify audit and security event logging, retention, and append-only integrity
 void testAuditLogLoginAndSecurityEvents() {
@@ -145,11 +150,156 @@ void testAppendOnlyIntegrityAndRetention() {
     std::filesystem::remove(logPath);
 }
 
+// Comment 4 verification: Log injection prevention (CWE-117)
+void testLogInjectionPrevention() {
+    const auto logPath = std::filesystem::temp_directory_path() / "srm_audit_injection.log";
+    std::filesystem::remove(logPath);
+
+    AuditService audit(logPath);
+
+    // Attempt log injection using tab, carriage return, newline, and backslash characters
+    const std::string maliciousUser = "attacker\tAdministrator\tLOGIN_SUCCESS\nfake_entry";
+    const std::string maliciousDetails = "Line 1\r\nLine 2\tTabbed\nLine 3\\backslash";
+    const std::string maliciousResource = "res\tname\nwith\nnewlines";
+
+    assert(audit.logLogin(maliciousUser, Role::Student, false, maliciousDetails));
+
+    // Verify exactly 1 entry was recorded despite newlines in fields
+    assert(audit.count() == 1);
+
+    // Verify raw file contains only 1 newline (at the end of the entry)
+    {
+        std::ifstream in(logPath);
+        std::string rawContent((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::size_t newlineCount = 0;
+        for (char ch : rawContent) {
+            if (ch == '\n') ++newlineCount;
+        }
+        assert(newlineCount == 1);
+        // Literal tabs inside user and details should be escaped
+        assert(rawContent.find("\\tAdministrator") != std::string::npos);
+        assert(rawContent.find("\\nfake_entry") != std::string::npos);
+    }
+
+    // Verify query unescapes back accurately
+    const auto entries = audit.query();
+    assert(entries.size() == 1);
+    assert(entries[0].username == maliciousUser);
+    assert(entries[0].details == maliciousDetails);
+
+    std::filesystem::remove(logPath);
+}
+
+// Comment 6 verification: Handling of malformed/corrupted rows
+void testMalformedRowHandling() {
+    const auto logPath = std::filesystem::temp_directory_path() / "srm_audit_corrupted.log";
+    std::filesystem::remove(logPath);
+
+    AuditService audit(logPath);
+    assert(audit.logLogin("alice", Role::Teacher, true, "First entry"));
+
+    // Manually inject malformed lines into the log file
+    {
+        std::ofstream out(logPath, std::ios::app);
+        out << "only_one_field\n";
+        out << "two\tfields\n";
+        out << "2026-01-01T00:00:00Z\tuser\tNonExistentRole\tACTION\tRES\tSUCCESS\tdetails\n";
+    }
+
+    // Append another valid entry
+    assert(audit.logLogin("bob", Role::Student, true, "Second valid entry"));
+
+    // Query should parse the 2 valid entries and track the 3 malformed lines
+    const auto validEntries = audit.query();
+    assert(validEntries.size() == 2);
+    assert(validEntries[0].username == "alice");
+    assert(validEntries[1].username == "bob");
+    assert(audit.malformedRowsCount() == 3);
+
+    std::filesystem::remove(logPath);
+}
+
+// Comments 1 & 2 verification: End-to-end integration with AuthService and StudentService
+void testServiceIntegrationWithAuditLogging() {
+    const auto auditPath = std::filesystem::temp_directory_path() / "srm_audit_integration.log";
+    const auto userPath = std::filesystem::temp_directory_path() / "srm_users_audit.txt";
+    const auto studentPath = std::filesystem::temp_directory_path() / "srm_students_audit.txt";
+
+    std::filesystem::remove(auditPath);
+    std::filesystem::remove(userPath);
+    std::filesystem::remove(studentPath);
+
+    AuditService audit(auditPath);
+
+    // 1. AuthService integration
+    AuthService auth(userPath, 100);
+    auth.setAuditService(&audit);
+
+    // Setup initial admin
+    const auto setupRes = auth.setupInitialAdmin("admin", "Admin#1234");
+    assert(setupRes.success);
+
+    // Register a teacher
+    const Session adminSession{Role::Administrator, true, {}, "admin"};
+    const auto regRes = auth.registerUser(adminSession, "teacher1", "Teach#1234", Role::Teacher);
+    assert(regRes.success);
+
+    // Login success
+    const auto loginOk = auth.login("teacher1", "Teach#1234");
+    assert(loginOk.success);
+
+    // Failed login attempts causing account lockout
+    auth.login("teacher1", "WrongPass1");
+    auth.login("teacher1", "WrongPass2");
+    auth.login("teacher1", "WrongPass3");
+    assert(auth.isAccountLocked("teacher1"));
+
+    // Unlock account
+    const auto unlockRes = auth.unlockAccount(adminSession, "teacher1");
+    assert(unlockRes.success);
+    assert(!auth.isAccountLocked("teacher1"));
+
+    // 2. StudentService integration
+    StudentService students(studentPath);
+    students.setAuditService(&audit);
+
+    // Add student
+    StudentRecord s1{"S201", "Charlie", "CS", "charlie@pes.edu"};
+    assert(students.addStudent(adminSession, s1).success);
+
+    // Update student
+    assert(students.updateStudent(adminSession, "S201", "Charlie Brown", "CS", "cb@pes.edu").success);
+
+    // Delete student
+    assert(students.deleteStudent(adminSession, "S201", "Y").success);
+
+    // Verify audit log has recorded all these events
+    const auto allLogs = audit.query();
+    assert(allLogs.size() >= 8);
+
+    assert(audit.query("", "REGISTER_USER").size() == 1);
+    assert(audit.query("", "LOGIN_SUCCESS").size() == 1);
+    assert(audit.query("", "LOGIN_FAILED").size() == 3);
+    assert(audit.query("", "ACCOUNT_LOCKED").size() == 1);
+    assert(audit.query("", "ACCOUNT_UNLOCKED").size() == 1);
+    assert(audit.query("", "CREATE_STUDENT").size() == 1);
+    assert(audit.query("", "UPDATE_STUDENT").size() == 1);
+    assert(audit.query("", "DELETE_STUDENT").size() == 1);
+
+    std::filesystem::remove(auditPath);
+    std::filesystem::remove(userPath);
+    std::filesystem::remove(studentPath);
+}
+
 }  // namespace
 
 int main() {
     testAuditLogLoginAndSecurityEvents();
     testAuditLogCRUDAndSystemOperations();
     testAppendOnlyIntegrityAndRetention();
+    testLogInjectionPrevention();
+    testMalformedRowHandling();
+    testServiceIntegrationWithAuditLogging();
     return 0;
 }

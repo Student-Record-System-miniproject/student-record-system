@@ -22,6 +22,49 @@ std::string currentUtcTimestamp() {
     return ss.str();
 }
 
+std::string AuditService::sanitizeField(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (char c : input) {
+        switch (c) {
+            case '\t': out += "\\t"; break;
+            case '\r': out += "\\r"; break;
+            case '\n': out += "\\n"; break;
+            case '\\': out += "\\\\"; break;
+            default:   out += c; break;
+        }
+    }
+    return out;
+}
+
+std::string AuditService::unescapeField(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        if (input[i] == '\\' && i + 1 < input.size()) {
+            char next = input[i + 1];
+            if (next == 't') {
+                out += '\t';
+                ++i;
+            } else if (next == 'r') {
+                out += '\r';
+                ++i;
+            } else if (next == 'n') {
+                out += '\n';
+                ++i;
+            } else if (next == '\\') {
+                out += '\\';
+                ++i;
+            } else {
+                out += '\\';
+            }
+        } else {
+            out += input[i];
+        }
+    }
+    return out;
+}
+
 AuditService::AuditService(std::filesystem::path logFilePath)
     : logFilePath_(std::move(logFilePath)) {}
 
@@ -41,13 +84,14 @@ bool AuditService::appendRow(const AuditEntry& entry) const {
         return false;
     }
 
-    out << (entry.timestamp.empty() ? currentUtcTimestamp() : entry.timestamp) << '\t'
-        << (entry.username.empty() ? "anonymous" : entry.username) << '\t'
-        << roleToString(entry.role) << '\t'
-        << entry.action << '\t'
-        << entry.targetResource << '\t'
-        << entry.status << '\t'
-        << entry.details << '\n';
+    // Sanitize every field to prevent log injection (CWE-117)
+    out << sanitizeField(entry.timestamp.empty() ? currentUtcTimestamp() : entry.timestamp) << '\t'
+        << sanitizeField(entry.username.empty() ? "anonymous" : entry.username) << '\t'
+        << sanitizeField(roleToString(entry.role)) << '\t'
+        << sanitizeField(entry.action) << '\t'
+        << sanitizeField(entry.targetResource) << '\t'
+        << sanitizeField(entry.status) << '\t'
+        << sanitizeField(entry.details) << '\n';
 
     return out.good();
 }
@@ -75,7 +119,7 @@ bool AuditService::logSecurityViolation(const SecurityEvent& event,
                                         const std::string& username) {
     AuditEntry entry;
     entry.timestamp = currentUtcTimestamp();
-    entry.username = username.empty() ? "anonymous" : username;
+    entry.username = !username.empty() ? username : (!event.username.empty() ? event.username : "anonymous");
     entry.role = event.role;
     entry.action = "SECURITY_VIOLATION";
     entry.targetResource = event.targetResource.empty() ? event.studentRollNumber : event.targetResource;
@@ -102,6 +146,7 @@ bool AuditService::logOperation(const Session& session,
 
 bool AuditService::loadEntries(std::vector<AuditEntry>& out) const {
     out.clear();
+    malformedRowsCount_ = 0;
     std::ifstream in(logFilePath_);
     if (!in.is_open()) {
         return !std::filesystem::exists(logFilePath_);
@@ -114,20 +159,31 @@ bool AuditService::loadEntries(std::vector<AuditEntry>& out) const {
         }
 
         std::istringstream row(line);
-        AuditEntry entry;
-        std::string roleStr;
+        std::string rawTs, rawUser, rawRole, rawAction, rawTarget, rawStatus, rawDetails;
 
-        if (!std::getline(row, entry.timestamp, '\t') ||
-            !std::getline(row, entry.username, '\t') ||
-            !std::getline(row, roleStr, '\t') ||
-            !std::getline(row, entry.action, '\t') ||
-            !std::getline(row, entry.targetResource, '\t') ||
-            !std::getline(row, entry.status, '\t')) {
+        if (!std::getline(row, rawTs, '\t') ||
+            !std::getline(row, rawUser, '\t') ||
+            !std::getline(row, rawRole, '\t') ||
+            !std::getline(row, rawAction, '\t') ||
+            !std::getline(row, rawTarget, '\t') ||
+            !std::getline(row, rawStatus, '\t')) {
+            ++malformedRowsCount_;
             continue;
         }
 
-        stringToRole(roleStr, entry.role);
-        std::getline(row, entry.details);
+        std::getline(row, rawDetails);
+
+        AuditEntry entry;
+        entry.timestamp = unescapeField(rawTs);
+        entry.username = unescapeField(rawUser);
+        if (!stringToRole(unescapeField(rawRole), entry.role)) {
+            ++malformedRowsCount_;
+            continue;
+        }
+        entry.action = unescapeField(rawAction);
+        entry.targetResource = unescapeField(rawTarget);
+        entry.status = unescapeField(rawStatus);
+        entry.details = unescapeField(rawDetails);
 
         out.push_back(std::move(entry));
     }
@@ -157,6 +213,10 @@ std::size_t AuditService::count() const {
     std::vector<AuditEntry> all;
     loadEntries(all);
     return all.size();
+}
+
+std::size_t AuditService::malformedRowsCount() const {
+    return malformedRowsCount_;
 }
 
 const std::filesystem::path& AuditService::logFilePath() const {

@@ -23,10 +23,19 @@ struct AuditEntry {
 };
 
 // SRM-F-044, SRM-NF-008, SRM-SR-005: Audit and security event logging service.
-// Enforces an append-only audit trail:
+// Enforces an append-only audit trail at the application layer:
 // - All system and security actions are logged with UTC timestamps and user information.
 // - Entries are written in append-only mode (std::ios::app).
+// - Input fields are sanitized to escape tabs and newlines to prevent log injection (CWE-117).
 // - The service intentionally exposes NO API to edit, alter, or delete audit entries.
+// - Malformed or corrupted lines during log inspection are tracked and reportable.
+//
+// NOTE ON PRODUCTION TAMPER RESISTANCE:
+// While AuditService provides application-level append-only guarantees and guarantees that the
+// application will never overwrite, truncate, or delete historical entries, operating-system level
+// immutability (e.g. against root/administrator users modifying the underlying disk file) requires
+// OS-level file attributes (chattr +a on Linux), dedicated WORM storage, or forwarding log streams
+// to an external remote SIEM / syslog collector.
 class AuditService {
 public:
     explicit AuditService(std::filesystem::path logFilePath);
@@ -36,7 +45,7 @@ public:
 
     // Convenience logging helpers
     bool logLogin(const std::string& username, Role role, bool success, const std::string& details = "");
-    bool logSecurityViolation(const SecurityEvent& event, const std::string& username);
+    bool logSecurityViolation(const SecurityEvent& event, const std::string& username = "");
     bool logOperation(const Session& session,
                       const std::string& action,
                       const std::string& targetResource,
@@ -48,10 +57,16 @@ public:
                                   const std::string& actionFilter = "") const;
 
     std::size_t count() const;
+    std::size_t malformedRowsCount() const;
     const std::filesystem::path& logFilePath() const;
+
+    // Field sanitization utilities to prevent log injection (CWE-117)
+    static std::string sanitizeField(const std::string& input);
+    static std::string unescapeField(const std::string& input);
 
 private:
     std::filesystem::path logFilePath_;
+    mutable std::size_t malformedRowsCount_ = 0;
     bool appendRow(const AuditEntry& entry) const;
     bool loadEntries(std::vector<AuditEntry>& out) const;
 };
