@@ -95,8 +95,9 @@ void testDeleteRequiresConfirmationAndCanCancel() {
     assert(!cascadeTriggered);
     assert(service.getStudent(adminSession, "S101") != nullptr);
 
-    // Any answer other than Y/y keeps the record
+    // Invalid confirmation such as "No" is rejected.
     const auto randomResult = service.deleteStudent(adminSession, "S101", "No");
+    assert(randomResult.error == ErrorCode::InvalidInput);
     assert(!randomResult.success);
     assert(!cascadeTriggered);
     assert(service.getStudent(adminSession, "S101") != nullptr);
@@ -236,6 +237,70 @@ void testCascadeFailureRollsBackStudentDeletion() {
     std::filesystem::remove(path);
 }
 
+void testSecureInputValidation() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-student-input-validation.tsv";
+    std::filesystem::remove(path);
+
+    StudentService service(path);
+
+    // Create one valid student for lookup and update tests.
+    assert(service.addStudent(
+        adminSession,
+        {"S101", "Alice Smith", "CSE", "alice@test.edu"}).success);
+
+    const std::string longInput(101, 'A');
+
+    // 1. Reject empty student fields.
+    const auto emptyField = service.addStudent(
+        adminSession, {"", "Bob", "ECE", "bob@test.edu"});
+    assert(!emptyField.success);
+    assert(emptyField.error == ErrorCode::InvalidInput);
+
+    // 2. Reject fields exceeding the maximum length.
+    const auto longField = service.addStudent(
+        adminSession, {"S102", longInput, "ECE", "bob@test.edu"});
+    assert(!longField.success);
+    assert(longField.error == ErrorCode::InvalidInput);
+
+    // 3. Reject control characters in student fields.
+    const auto malformedField = service.addStudent(
+        adminSession, {"S103", "Alice\nSmith", "CSE", "alice@test.edu"});
+    assert(!malformedField.success);
+    assert(malformedField.error == ErrorCode::InvalidInput);
+
+    // 4. Reject invalid input while updating a student.
+    const auto invalidUpdate = service.updateStudent(
+        adminSession, "S101", longInput, "CSE", "alice@test.edu");
+    assert(!invalidUpdate.success);
+    assert(invalidUpdate.error == ErrorCode::InvalidInput);
+
+    // 5. Reject malformed roll numbers during deletion.
+    const auto invalidRoll = service.deleteStudent(
+        adminSession, "S101\n", "Y");
+    assert(!invalidRoll.success);
+    assert(invalidRoll.error == ErrorCode::InvalidInput);
+
+    // 6. Reject invalid deletion confirmations.
+    const auto invalidConfirmation = service.deleteStudent(
+        adminSession, "S101", "Yes");
+    assert(!invalidConfirmation.success);
+    assert(invalidConfirmation.error == ErrorCode::InvalidInput);
+
+    // Student record must remain after rejected deletion attempts.
+    assert(service.exists("S101"));
+
+    // 7. Reject empty and excessively long search queries.
+    assert(service.searchStudents(adminSession, "").empty());
+    assert(service.searchStudents(adminSession, longInput).empty());
+
+    // 8. Reject malformed lookup inputs.
+    assert(service.getStudent(adminSession, "S101\n") == nullptr);
+    assert(!service.exists("S101\n"));
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -246,5 +311,6 @@ int main() {
     testDeleteRoleRestrictions();
     testAddStudentRbacAndDuplicates();
     testCascadeFailureRollsBackStudentDeletion();
+    testSecureInputValidation();
     return 0;
 }

@@ -1,5 +1,7 @@
+
 #include "srm/auth_service.h"
 #include "srm/common_types.h"
+#include "srm/input_validator.h"
 
 #include <iostream>
 #include <string>
@@ -39,10 +41,16 @@ int main() {
 
         std::cout << "\nStudent Record System\n";
         std::cout << "Username: ";
-        std::cin >> username;
+
+        if (!std::getline(std::cin, username)) {
+            return 0;
+        }
 
         std::cout << "Password: ";
-        std::cin >> password;
+
+        if (!std::getline(std::cin, password)) {
+            return 0;
+        }
 
         srm::LoginResult result = authService.login(username, password);
 
@@ -59,7 +67,18 @@ int main() {
             std::cout << "\nEnter your choice: ";
 
             std::string choice;
-            std::cin >> choice;
+
+            if (!std::getline(std::cin, choice)) {
+                return 0;
+            }
+
+            int choiceNumber = 0;
+
+            if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
+                !srm::InputValidator::validateRange(choiceNumber, 1, 3)) {
+                std::cout << "Invalid choice. Please enter a number between 1 and 3.\n";
+                continue;
+            }
 
             if (srm::isSessionExpired(session)) {
                 session.authenticated = false;
@@ -68,7 +87,7 @@ int main() {
                 break;
             }
 
-            std::cout << "Action " << choice << " selected.\n";
+            std::cout << "Action " << choiceNumber << " selected.\n";
             session.lastActivity = std::chrono::steady_clock::now();
         }
     }
