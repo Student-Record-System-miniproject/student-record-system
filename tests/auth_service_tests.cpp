@@ -269,6 +269,77 @@ void testSessionTimeout() {
     assert(srm::isSessionExpired(session));
 }
 
+void testSecureInputValidation() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-input-validation.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+
+    const std::string longInput(101, 'A');
+
+    // 1. Reject empty username during initial admin setup.
+    const auto emptyUsername =
+        service.setupInitialAdmin("", "RootPassword123");
+    assert(!emptyUsername.success);
+    assert(emptyUsername.error == ErrorCode::InvalidInput);
+
+    // 2. Reject excessively long username.
+    const auto longUsername =
+        service.setupInitialAdmin(longInput, "RootPassword123");
+    assert(!longUsername.success);
+    assert(longUsername.error == ErrorCode::InvalidInput);
+
+    // 3. Reject control characters in username.
+    const auto malformedUsername =
+        service.setupInitialAdmin("admin\nuser", "RootPassword123");
+    assert(!malformedUsername.success);
+    assert(malformedUsername.error == ErrorCode::InvalidInput);
+
+    // 4. Valid admin setup should still succeed.
+    const auto setup =
+        service.setupInitialAdmin("admin", "RootPassword123");
+    assert(setup.success);
+
+    // 5. Reject empty login username.
+    const auto emptyLogin = service.login("", "RootPassword123");
+    assert(!emptyLogin.success);
+    assert(emptyLogin.error == ErrorCode::InvalidInput);
+
+    // 6. Reject excessively long login password.
+    const auto longPassword = service.login("admin", longInput);
+    assert(!longPassword.success);
+    assert(longPassword.error == ErrorCode::InvalidInput);
+
+    // 7. Reject malformed username during account unlock.
+    const auto invalidUnlock =
+        service.unlockAccount(adminSession, "admin\n");
+    assert(!invalidUnlock.success);
+    assert(invalidUnlock.error == ErrorCode::InvalidInput);
+
+    // 8. Reject malformed student roll number during registration.
+    const auto invalidRoll = service.registerUser(
+        adminSession, "student2", "StudentPass123",
+        Role::Student, "S002\n");
+    assert(!invalidRoll.success);
+    assert(invalidRoll.error == ErrorCode::InvalidInput);
+
+    // 9. Reject excessively long student roll number.
+    const auto longRoll = service.registerUser(
+        adminSession, "student3", "StudentPass123",
+        Role::Student, longInput);
+    assert(!longRoll.success);
+    assert(longRoll.error == ErrorCode::InvalidInput);
+
+    // 10. Valid registration should still succeed.
+    const auto validRegistration = service.registerUser(
+        adminSession, "student4", "StudentPass123",
+        Role::Student, "S004");
+    assert(validRegistration.success);
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -280,5 +351,6 @@ int main() {
     testPasswordHashingAndSecureStorage();
     testCryptoPBKDF2Verification();
     testSessionTimeout();
+    testSecureInputValidation();
     return 0;
 }

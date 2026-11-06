@@ -1,5 +1,6 @@
 #include "srm/student_service.h"
 #include "srm/audit_service.h"
+#include "srm/input_validator.h"
 
 #include <algorithm>
 #include <cctype>
@@ -9,11 +10,6 @@
 
 namespace srm {
 namespace {
-
-bool validField(const std::string& value) {
-    return !value.empty() && value.find('\t') == std::string::npos &&
-           value.find('\n') == std::string::npos;
-}
 
 std::string toLower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -41,10 +37,10 @@ bool StudentRepository::load() {
             !std::getline(row, student.name, '\t') ||
             !std::getline(row, student.department, '\t') ||
             !std::getline(row, student.email) ||
-            !validField(student.rollNumber) ||
-            !validField(student.name) ||
-            !validField(student.department) ||
-            !validField(student.email)) {
+            !InputValidator::validateText(student.rollNumber) ||
+            !InputValidator::validateText(student.name) ||
+            !InputValidator::validateText(student.department) ||
+            !InputValidator::validateText(student.email)) {
             records_.clear();
             return false;
         }
@@ -153,10 +149,15 @@ OperationResult StudentService::addStudent(const Session& session,
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "Student storage is not ready."};
     }
-    if (!validField(student.rollNumber) || !validField(student.name) ||
-        !validField(student.department) || !validField(student.email)) {
-        return {false, ErrorCode::InvalidInput, "All student fields must be non-empty."};
+
+    if (!InputValidator::validateText(student.rollNumber) ||
+        !InputValidator::validateText(student.name) ||
+        !InputValidator::validateText(student.department) ||
+        !InputValidator::validateText(student.email)) {
+        return {false, ErrorCode::InvalidInput,
+                "All student fields must be non-empty and valid."};
     }
+
     if (repository_.findByRollNumber(student.rollNumber) != nullptr) {
         return {false, ErrorCode::DuplicateRecord, "Student with this roll number already exists."};
     }
@@ -166,7 +167,11 @@ OperationResult StudentService::addStudent(const Session& session,
         return {false, ErrorCode::StorageFailure, "Failed to save student record to storage."};
     }
     if (auditService_) {
-        auditService_->logOperation(session, "CREATE_STUDENT", rollNumber, true, "Created student " + studentName);
+        const bool logged = auditService_->logOperation(session, "CREATE_STUDENT", rollNumber, true, "Created student " + studentName);
+        if (!logged && requireAudit_) {
+            repository_.remove(rollNumber);
+            return {false, ErrorCode::StorageFailure, "Operation aborted: Audit logging failure (fail-secure policy)"};
+        }
     }
     return {true, ErrorCode::None, "Student record created."};
 }
@@ -183,10 +188,15 @@ OperationResult StudentService::updateStudent(const Session& session,
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "Student storage is not ready."};
     }
-    if (!validField(rollNumber) || !validField(newName) ||
-        !validField(newDepartment) || !validField(newEmail)) {
-        return {false, ErrorCode::InvalidInput, "Updated fields must be non-empty and valid."};
+
+    if (!InputValidator::validateText(rollNumber) ||
+        !InputValidator::validateText(newName) ||
+        !InputValidator::validateText(newDepartment) ||
+        !InputValidator::validateText(newEmail)) {
+        return {false, ErrorCode::InvalidInput,
+                "Student fields must be non-empty and valid."};
     }
+
     if (repository_.findByRollNumber(rollNumber) == nullptr) {
         return {false, ErrorCode::StudentNotFound, "Student record not found."};
     }
@@ -195,7 +205,10 @@ OperationResult StudentService::updateStudent(const Session& session,
         return {false, ErrorCode::StorageFailure, "Failed to save updated student record."};
     }
     if (auditService_) {
-        auditService_->logOperation(session, "UPDATE_STUDENT", rollNumber, true, "Updated student record");
+        const bool logged = auditService_->logOperation(session, "UPDATE_STUDENT", rollNumber, true, "Updated student record");
+        if (!logged && requireAudit_) {
+            return {false, ErrorCode::StorageFailure, "Operation aborted: Audit logging failure (fail-secure policy)"};
+        }
     }
     return {true, ErrorCode::None, "Student record updated successfully."};
 }
@@ -210,16 +223,26 @@ OperationResult StudentService::deleteStudent(const Session& session,
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "Student storage is not ready."};
     }
+
+    if (!InputValidator::validateText(rollNumber)) {
+        return {false, ErrorCode::InvalidInput,
+                "Student roll number contains invalid input."};
+    }
+
+    if (!InputValidator::validateConfirmation(confirmation)) {
+        return {false, ErrorCode::InvalidInput,
+                "Confirmation must be Y or N."};
+    }
+
+    if (confirmation == "N" || confirmation == "n") {
+        return {false, ErrorCode::None,
+                "Deletion cancelled. Student record retained."};
+    }
     const auto* existing = repository_.findByRollNumber(rollNumber);
     if (existing == nullptr) {
         return {false, ErrorCode::StudentNotFound, "Student record not found."};
     }
     const auto studentSnapshot = *existing;
-
-    // Explicit confirmation check (SRM-F-013, TC-STU-03)
-    if (confirmation != "Y" && confirmation != "y") {
-        return {false, ErrorCode::None, "Deletion cancelled. Student record retained."};
-    }
 
     if (!repository_.remove(rollNumber)) {
         return {false, ErrorCode::StorageFailure, "Failed to delete student record from storage."};
@@ -236,8 +259,12 @@ OperationResult StudentService::deleteStudent(const Session& session,
     }
 
     if (auditService_) {
-        auditService_->logOperation(session, "DELETE_STUDENT", rollNumber, true,
-                                    "Student record and associated records deleted");
+        const bool logged = auditService_->logOperation(session, "DELETE_STUDENT", rollNumber, true,
+                                                        "Student record and associated records deleted");
+        if (!logged && requireAudit_) {
+            repository_.add(studentSnapshot);
+            return {false, ErrorCode::StorageFailure, "Operation aborted: Audit logging failure (fail-secure policy)"};
+        }
     }
 
     return {true, ErrorCode::None, "Student record and associated records deleted."};
@@ -246,6 +273,10 @@ OperationResult StudentService::deleteStudent(const Session& session,
 const StudentRecord* StudentService::getStudent(const Session& session,
                                                 const std::string& rollNumber) const {
     if (!session.authenticated) {
+        return nullptr;
+    }
+
+    if (!InputValidator::validateText(rollNumber)) {
         return nullptr;
     }
     if (session.role == Role::Student && session.studentRollNumber != rollNumber) {
@@ -259,19 +290,31 @@ std::vector<StudentRecord> StudentService::searchStudents(const Session& session
     if (!session.authenticated || session.role == Role::Student) {
         return {};
     }
+    if (!InputValidator::validateText(query)) {
+        return {};
+    }
     return repository_.searchByName(query);
 }
 
 bool StudentService::exists(const std::string& rollNumber) const {
+    if (!InputValidator::validateText(rollNumber)) {
+        return false;
+    }
+
     return repository_.findByRollNumber(rollNumber) != nullptr;
 }
 
-void StudentService::setAuditService(AuditService* auditService) {
+void StudentService::setAuditService(AuditService* auditService, bool requireAudit) {
     auditService_ = auditService;
+    requireAudit_ = requireAudit;
 }
 
 AuditService* StudentService::auditService() const {
     return auditService_;
+}
+
+bool StudentService::isAuditRequired() const {
+    return requireAudit_;
 }
 
 }  // namespace srm

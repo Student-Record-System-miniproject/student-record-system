@@ -4,6 +4,7 @@
 #include <ctime>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 namespace srm {
@@ -74,6 +75,9 @@ bool AuditService::appendRow(const AuditEntry& entry) const {
     if (!parent.empty()) {
         std::filesystem::create_directories(parent, ec);
         if (ec) {
+            lastWriteFailed_ = true;
+            ++writeFailureCount_;
+            std::cerr << "[AUDIT ALERT] Unable to create audit directory: " << parent.string() << std::endl;
             return false;
         }
     }
@@ -81,6 +85,9 @@ bool AuditService::appendRow(const AuditEntry& entry) const {
     // Always opened strictly in append mode (SRM-NF-008: append-only audit trail)
     std::ofstream out(logFilePath_, std::ios::app);
     if (!out.is_open()) {
+        lastWriteFailed_ = true;
+        ++writeFailureCount_;
+        std::cerr << "[AUDIT ALERT] Failed to open audit log for append: " << logFilePath_.string() << std::endl;
         return false;
     }
 
@@ -93,7 +100,15 @@ bool AuditService::appendRow(const AuditEntry& entry) const {
         << sanitizeField(entry.status) << '\t'
         << sanitizeField(entry.details) << '\n';
 
-    return out.good();
+    if (!out.good()) {
+        lastWriteFailed_ = true;
+        ++writeFailureCount_;
+        std::cerr << "[AUDIT ALERT] Failed writing to audit log: " << logFilePath_.string() << std::endl;
+        return false;
+    }
+
+    lastWriteFailed_ = false;
+    return true;
 }
 
 bool AuditService::record(const AuditEntry& entry) {
@@ -142,6 +157,20 @@ bool AuditService::logOperation(const Session& session,
     entry.status = success ? "SUCCESS" : "FAILURE";
     entry.details = details;
     return record(entry);
+}
+
+bool AuditService::logBackup(const Session& session,
+                             const std::string& backupArchive,
+                             bool success,
+                             const std::string& details) {
+    return logOperation(session, "BACKUP_DATA", backupArchive, success, details);
+}
+
+bool AuditService::logRestore(const Session& session,
+                              const std::string& backupArchive,
+                              bool success,
+                              const std::string& details) {
+    return logOperation(session, "RESTORE_DATA", backupArchive, success, details);
 }
 
 bool AuditService::loadEntries(std::vector<AuditEntry>& out) const {
@@ -217,6 +246,14 @@ std::size_t AuditService::count() const {
 
 std::size_t AuditService::malformedRowsCount() const {
     return malformedRowsCount_;
+}
+
+std::size_t AuditService::writeFailureCount() const {
+    return writeFailureCount_;
+}
+
+bool AuditService::lastWriteFailed() const {
+    return lastWriteFailed_;
 }
 
 const std::filesystem::path& AuditService::logFilePath() const {

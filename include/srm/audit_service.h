@@ -29,6 +29,7 @@ struct AuditEntry {
 // - Input fields are sanitized to escape tabs and newlines to prevent log injection (CWE-117).
 // - The service intentionally exposes NO API to edit, alter, or delete audit entries.
 // - Malformed or corrupted lines during log inspection are tracked and reportable.
+// - Audit write failures are detected, counted, and reportable (fail-secure / fail-open support).
 //
 // NOTE ON PRODUCTION TAMPER RESISTANCE:
 // While AuditService provides application-level append-only guarantees and guarantees that the
@@ -40,7 +41,7 @@ class AuditService {
 public:
     explicit AuditService(std::filesystem::path logFilePath);
 
-    // Append an entry to the append-only audit log
+    // Append an entry to the append-only audit log. Returns false if writing fails.
     bool record(const AuditEntry& entry);
 
     // Convenience logging helpers
@@ -52,12 +53,24 @@ public:
                       bool success,
                       const std::string& details = "");
 
+    // Specialized backup and restore logging helpers (SRM-F-041, SRM-F-042)
+    bool logBackup(const Session& session,
+                   const std::string& backupArchive,
+                   bool success,
+                   const std::string& details = "");
+    bool logRestore(const Session& session,
+                    const std::string& backupArchive,
+                    bool success,
+                    const std::string& details = "");
+
     // Read-only query / inspection of audit log entries (no mutation or deletion possible)
     std::vector<AuditEntry> query(const std::string& usernameFilter = "",
                                   const std::string& actionFilter = "") const;
 
     std::size_t count() const;
     std::size_t malformedRowsCount() const;
+    std::size_t writeFailureCount() const;
+    bool lastWriteFailed() const;
     const std::filesystem::path& logFilePath() const;
 
     // Field sanitization utilities to prevent log injection (CWE-117)
@@ -67,6 +80,8 @@ public:
 private:
     std::filesystem::path logFilePath_;
     mutable std::size_t malformedRowsCount_ = 0;
+    mutable std::size_t writeFailureCount_ = 0;
+    mutable bool lastWriteFailed_ = false;
     bool appendRow(const AuditEntry& entry) const;
     bool loadEntries(std::vector<AuditEntry>& out) const;
 };

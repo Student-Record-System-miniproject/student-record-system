@@ -67,11 +67,46 @@ void testStudentCannotViewAnotherReport() {
     std::filesystem::remove(path);
 }
 
+void testSecureInputValidation() {
+    const auto path = writeAttendanceFile();
+    auto service = serviceFor(path);
+
+    const std::string longInput(101, 'A');
+
+    // Empty roll number is rejected.
+    auto emptyReport = service.generateReport(teacher, "");
+    assert(!emptyReport.success);
+    assert(emptyReport.error == ErrorCode::InvalidInput);
+
+    // Excessively long roll number is rejected.
+    auto longReport = service.generateReport(teacher, longInput);
+    assert(!longReport.success);
+    assert(longReport.error == ErrorCode::InvalidInput);
+
+    // Newline in roll number is rejected.
+    auto malformedReport = service.generateReport(teacher, "S001\n");
+    assert(!malformedReport.success);
+    assert(malformedReport.error == ErrorCode::InvalidInput);
+
+    // Invalid roll numbers are rejected during deletion.
+    assert(!service.deleteStudentAttendance(""));
+    assert(!service.deleteStudentAttendance(longInput));
+    assert(!service.deleteStudentAttendance("S001\n"));
+
+    // Existing attendance records must remain unchanged.
+    const auto report = service.generateReport(teacher, "S001");
+    assert(report.success);
+    assert(report.report.find("Present 2/3") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
     testTeacherCanViewAnyStudent();
     testStudentCanViewOwnReport();
     testStudentCannotViewAnotherReport();
+    testSecureInputValidation();
     return 0;
 }

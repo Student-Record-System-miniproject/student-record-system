@@ -14,6 +14,7 @@ using srm::AccessController;
 using srm::AuditEntry;
 using srm::AuditService;
 using srm::AuthService;
+using srm::ErrorCode;
 using srm::Operation;
 using srm::Role;
 using srm::SecurityEvent;
@@ -91,8 +92,8 @@ void testAuditLogCRUDAndSystemOperations() {
     assert(audit.logOperation(adminSession, "DELETE_STUDENT", "S101", true, "Confirmed delete"));
 
     // Log Backup and Restore operations
-    assert(audit.logOperation(adminSession, "BACKUP_DATA", "backup_2026.tar", true, "Full system backup"));
-    assert(audit.logOperation(adminSession, "RESTORE_DATA", "backup_2026.tar", true, "Restored state"));
+    assert(audit.logBackup(adminSession, "backup_2026.tar", true, "Full system backup"));
+    assert(audit.logRestore(adminSession, "backup_2026.tar", true, "Restored state"));
 
     assert(audit.count() == 5);
 
@@ -220,6 +221,48 @@ void testMalformedRowHandling() {
     std::filesystem::remove(logPath);
 }
 
+// Review comment verification: Handling audit write failures and fail-secure vs fail-open behavior
+void testAuditWriteFailureAndFailSecurePolicy() {
+    // Point audit service to an invalid path that cannot be written
+#if defined(_WIN32)
+    const auto invalidLogPath = std::filesystem::path("Z:\\non_existent_drive\\invalid.log");
+#else
+    const auto invalidLogPath = std::filesystem::path("/non_existent_root_dir/invalid.log");
+#endif
+
+    AuditService failingAudit(invalidLogPath);
+
+    // 1. Direct write returns false and tracks failure
+    assert(!failingAudit.logLogin("alice", Role::Teacher, true));
+    assert(failingAudit.lastWriteFailed());
+    assert(failingAudit.writeFailureCount() >= 1);
+
+    // 2. StudentService fail-secure policy test
+    const auto studentPath = std::filesystem::temp_directory_path() / "srm_student_fail_secure.txt";
+    std::filesystem::remove(studentPath);
+
+    StudentService studentService(studentPath);
+    const Session adminSession{Role::Administrator, true, {}, "admin"};
+    const StudentRecord student{"S501", "Dave", "ECE", "dave@pes.edu"};
+
+    // With fail-secure policy (requireAudit = true): operation fails if audit fails
+    studentService.setAuditService(&failingAudit, true);
+    assert(studentService.isAuditRequired());
+    const auto secureRes = studentService.addStudent(adminSession, student);
+    assert(!secureRes.success);
+    assert(secureRes.error == ErrorCode::StorageFailure);
+    assert(!studentService.exists("S501"));
+
+    // With fail-open policy (requireAudit = false, default): operation succeeds with logged alert
+    studentService.setAuditService(&failingAudit, false);
+    assert(!studentService.isAuditRequired());
+    const auto openRes = studentService.addStudent(adminSession, student);
+    assert(openRes.success);
+    assert(studentService.exists("S501"));
+
+    std::filesystem::remove(studentPath);
+}
+
 // Comments 1 & 2 verification: End-to-end integration with AuthService and StudentService
 void testServiceIntegrationWithAuditLogging() {
     const auto auditPath = std::filesystem::temp_directory_path() / "srm_audit_integration.log";
@@ -300,6 +343,7 @@ int main() {
     testAppendOnlyIntegrityAndRetention();
     testLogInjectionPrevention();
     testMalformedRowHandling();
+    testAuditWriteFailureAndFailSecurePolicy();
     testServiceIntegrationWithAuditLogging();
     return 0;
 }

@@ -1,11 +1,13 @@
 #include "srm/audit_service.h"
 #include "srm/auth_service.h"
 #include "srm/common_types.h"
+#include "srm/input_validator.h"
 #include "srm/rbac.h"
+#include "srm/student_service.h"
 
+#include <chrono>
 #include <iostream>
 #include <string>
-#include <chrono>
 
 void displayMenu(const srm::Session& session) {
     std::cout << "\nLogin successful.\n";
@@ -41,8 +43,13 @@ int main() {
         auditService.logSecurityViolation(ev, ev.username.empty() ? "anonymous" : ev.username);
     });
 
+    // Wire audit logging to authentication service
     srm::AuthService authService("data/users.txt");
     authService.setAuditService(&auditService);
+
+    // Wire audit logging to student service (addressing review feedback)
+    srm::StudentService studentService("data/students.txt");
+    studentService.setAuditService(&auditService);
 
     while (true) {
         std::string username;
@@ -50,13 +57,15 @@ int main() {
 
         std::cout << "\nStudent Record System\n";
         std::cout << "Username: ";
-        if (!(std::cin >> username)) {
-            break;
+
+        if (!std::getline(std::cin, username)) {
+            return 0;
         }
 
         std::cout << "Password: ";
-        if (!(std::cin >> password)) {
-            break;
+
+        if (!std::getline(std::cin, password)) {
+            return 0;
         }
 
         srm::LoginResult result = authService.login(username, password);
@@ -74,8 +83,15 @@ int main() {
             std::cout << "\nEnter your choice: ";
 
             std::string choice;
-            if (!(std::cin >> choice)) {
-                break;
+            if (!std::getline(std::cin, choice)) {
+                return 0;
+            }
+
+            int choiceNumber = 0;
+            if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
+                !srm::InputValidator::validateRange(choiceNumber, 1, 3)) {
+                std::cout << "Invalid choice. Please enter a number between 1 and 3.\n";
+                continue;
             }
 
             if (srm::isSessionExpired(session)) {
@@ -87,8 +103,15 @@ int main() {
                 break;
             }
 
-            std::cout << "Action " << choice << " selected.\n";
-            auditService.logOperation(session, "MENU_ACTION", "Option_" + choice, true);
+            std::cout << "Action " << choiceNumber << " selected.\n";
+            auditService.logOperation(session, "MENU_ACTION", "Option_" + std::to_string(choiceNumber), true);
+
+            // Execute student management action when selected
+            if (choiceNumber == 2 && session.role == srm::Role::Administrator) {
+                const auto students = studentService.searchStudents(session, "");
+                std::cout << "Current registered student count: " << students.size() << "\n";
+            }
+
             session.lastActivity = std::chrono::steady_clock::now();
         }
     }
