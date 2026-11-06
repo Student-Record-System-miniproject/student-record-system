@@ -78,6 +78,46 @@ void testPermissionsAndIdentifiersAreValidated() {
     std::filesystem::remove(path);
 }
 
+void testSecureInputValidation() {
+    const auto path = std::filesystem::temp_directory_path() / "srm-grade-input-security.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    // Empty and excessively long roll numbers are rejected.
+    assert(service.enterOrUpdateMarks(
+        teacher, "", "Mathematics", 1, "80").error == ErrorCode::InvalidInput);
+
+    const std::string longInput(101, 'A');
+    assert(service.enterOrUpdateMarks(
+        teacher, longInput, "Mathematics", 1, "80").error == ErrorCode::InvalidInput);
+
+    // Malformed text fields are rejected.
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Math\nematics", 1, "80").error == ErrorCode::InvalidInput);
+
+    // Invalid semester values are rejected.
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Mathematics", 0, "80").error == ErrorCode::InvalidInput);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Mathematics", -1, "80").error == ErrorCode::InvalidInput);
+
+    // Decimal and malformed marks are rejected.
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Mathematics", 1, "12.5").error == ErrorCode::InvalidInput);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Mathematics", 1, "12abc").error == ErrorCode::InvalidInput);
+
+    // Invalid report-card roll numbers are rejected.
+    const auto report = service.generateReportCard(teacher, "");
+    assert(!report.success);
+    assert(report.error == ErrorCode::InvalidInput);
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -85,5 +125,6 @@ int main() {
     testInvalidMarksAreRejected();
     testUpdateReplacesAndPersists();
     testPermissionsAndIdentifiersAreValidated();
+    testSecureInputValidation();
     return 0;
 }

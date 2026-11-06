@@ -1,9 +1,9 @@
 #include "srm/grade_service.h"
 #include "srm/report_export.h"
 #include "srm/rbac.h"
+#include "srm/input_validator.h"
 
 #include <algorithm>
-#include <charconv>
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -13,21 +13,6 @@ namespace {
 
 OperationResult failure(ErrorCode error, std::string message) {
     return {false, error, std::move(message)};
-}
-
-bool parseInteger(const std::string& input, int& value) {
-    if (input.empty()) {
-        return false;
-    }
-    const char* first = input.data();
-    const char* last = first + input.size();
-    const auto parsed = std::from_chars(first, last, value);
-    return parsed.ec == std::errc{} && parsed.ptr == last;
-}
-
-bool validField(const std::string& value) {
-    return !value.empty() && value.find('\t') == std::string::npos &&
-           value.find('\n') == std::string::npos;
 }
 
 }  // namespace
@@ -52,8 +37,12 @@ bool GradeRepository::load() {
             !std::getline(row, record.subject, '\t') ||
             !std::getline(row, semester, '\t') ||
             !std::getline(row, marks) ||
-            !parseInteger(semester, record.semester) ||
-            !parseInteger(marks, record.marks)) {
+            !InputValidator::validateText(record.rollNumber) ||
+            !InputValidator::validateText(record.subject) ||
+            !InputValidator::parseInteger(semester, record.semester) ||
+            !InputValidator::parseInteger(marks, record.marks) ||
+            record.semester <= 0 ||
+            !InputValidator::validateRange(record.marks, 0, 100)) {
             records_.clear();
             return false;
         }
@@ -135,7 +124,7 @@ OperationResult GradeService::enterOrUpdateMarks(
     if (!storageReady_) {
         return failure(ErrorCode::StorageFailure, "Grade data could not be loaded.");
     }
-    if (!validField(rollNumber) || !validField(subject) || semester <= 0) {
+    if (!InputValidator::validateText(rollNumber) || !InputValidator::validateText(subject) || semester <= 0) {
         return failure(ErrorCode::InvalidInput,
                        "Student, subject, and semester must be valid.");
     }
@@ -147,7 +136,7 @@ OperationResult GradeService::enterOrUpdateMarks(
     }
 
     int marks = 0;
-    if (!parseInteger(marksInput, marks) || marks < 0 || marks > 100) {
+    if (!InputValidator::parseInteger(marksInput, marks) || !InputValidator::validateRange(marks, 0, 100)) {
         return failure(ErrorCode::InvalidInput,
                        "Marks must be an integer from 0 through 100.");
     }
@@ -171,6 +160,12 @@ ReportResult GradeService::generateReportCard(const Session& session,
     if (!auth.success) {
         return {false, auth.error, auth.message, {}};
     }
+
+    if (!InputValidator::validateText(rollNumber)) {
+        return {false, ErrorCode::InvalidInput,
+                "Invalid student roll number.", {}};
+    }
+
     if (!studentExists_ || !studentExists_(rollNumber)) {
         return {false, ErrorCode::StudentNotFound, "Student was not found.", {}};
     }
@@ -194,6 +189,9 @@ OperationResult GradeService::exportReportCard(
 }
 
 bool GradeService::deleteStudentGrades(const std::string& rollNumber) {
+    if (!InputValidator::validateText(rollNumber)) {
+        return false;
+    }
     return repository_.removeByRollNumber(rollNumber);
 }
 
