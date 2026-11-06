@@ -301,6 +301,74 @@ void testSecureInputValidation() {
     std::filesystem::remove(path);
 }
 
+void testSearchAndListStudents() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-student-search-list.tsv";
+    std::filesystem::remove(path);
+
+    StudentService service(path);
+
+    // Add students in deliberately unsorted roll-number order.
+    assert(service.addStudent(
+        adminSession, {"S103", "Alice Johnson", "CSE", "alice@test.edu"}).success);
+
+    assert(service.addStudent(
+        adminSession, {"S101", "Bob Smith", "ECE", "bob@test.edu"}).success);
+
+    assert(service.addStudent(
+        adminSession, {"S102", "Alice Williams", "ME", "alice2@test.edu"}).success);
+
+    // 1. Administrator can search by exact roll number.
+    const auto* adminRecord = service.getStudent(adminSession, "S101");
+    assert(adminRecord != nullptr);
+    assert(adminRecord->name == "Bob Smith");
+
+    // 2. Teacher can search by exact roll number.
+    const auto* teacherRecord = service.getStudent(teacherSession, "S101");
+    assert(teacherRecord != nullptr);
+    assert(teacherRecord->name == "Bob Smith");
+
+    // 3. Partial name search is case-insensitive.
+    const auto nameMatches = service.searchStudents(adminSession, "aLiCe");
+    assert(nameMatches.size() == 2);
+
+    // 4. All matching records are returned.
+    assert(nameMatches[0].rollNumber == "S103");
+    assert(nameMatches[1].rollNumber == "S102");
+
+    // 5. Teacher can search by partial name.
+    const auto teacherMatches = service.searchStudents(teacherSession, "alice");
+    assert(teacherMatches.size() == 2);
+
+    // 6. Students cannot search other student records.
+    assert(service.searchStudents(studentSession, "alice").empty());
+
+    // 7. Unauthenticated users cannot search.
+    const Session unauthenticatedSession{Role::Student, false, {}};
+    assert(service.searchStudents(unauthenticatedSession, "alice").empty());
+
+    // 8. Administrator can list all students.
+    const auto adminList = service.listStudents(adminSession);
+    assert(adminList.size() == 3);
+
+    // 9. Students are listed in ascending roll-number order.
+    assert(adminList[0].rollNumber == "S101");
+    assert(adminList[1].rollNumber == "S102");
+    assert(adminList[2].rollNumber == "S103");
+
+    // 10. Teacher can also list all students.
+    const auto teacherList = service.listStudents(teacherSession);
+    assert(teacherList.size() == 3);
+
+    // 11. Students cannot list all student records.
+    assert(service.listStudents(studentSession).empty());
+
+    // 12. Unauthenticated users cannot list students.
+    assert(service.listStudents(unauthenticatedSession).empty());
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -312,5 +380,6 @@ int main() {
     testAddStudentRbacAndDuplicates();
     testCascadeFailureRollsBackStudentDeletion();
     testSecureInputValidation();
+    testSearchAndListStudents();
     return 0;
 }
