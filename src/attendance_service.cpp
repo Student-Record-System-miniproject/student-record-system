@@ -2,6 +2,7 @@
 #include "srm/report_export.h"
 #include "srm/rbac.h"
 #include "srm/storage_utils.h"
+#include "srm/input_validator.h"
 
 #include <algorithm>
 #include <fstream>
@@ -31,6 +32,7 @@ AttendanceRepository::AttendanceRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
 bool AttendanceRepository::load() {
+    recoverInterruptedSave(filePath_);
     records_.clear();
     std::ifstream input(filePath_);
     if (!input) {
@@ -45,8 +47,10 @@ bool AttendanceRepository::load() {
         if (!std::getline(row, record.rollNumber, '\t') ||
             !std::getline(row, record.subject, '\t') ||
             !std::getline(row, record.date, '\t') ||
-            !std::getline(row, status) || record.rollNumber.empty() ||
-            record.subject.empty() || record.date.empty() ||
+            !std::getline(row, status) ||
+            !InputValidator::validateText(record.rollNumber) ||
+            !InputValidator::validateText(record.subject) ||
+            !InputValidator::validateText(record.date) ||
             !parseStatus(status, record.status)) {
             records_.clear();
             return false;
@@ -103,6 +107,11 @@ ReportResult AttendanceService::generateReport(
     if (!auth.success) {
         return {false, auth.error, auth.message, {}};
     }
+    if (!InputValidator::validateText(rollNumber)) {
+        return {false, ErrorCode::InvalidInput,
+                "Invalid student roll number.", {}};
+    }
+
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure,
                 "Attendance data could not be loaded.", {}};
@@ -150,6 +159,10 @@ OperationResult AttendanceService::exportReport(
 }
 
 bool AttendanceService::deleteStudentAttendance(const std::string& rollNumber) {
+    if (!InputValidator::validateText(rollNumber)) {
+        return false;
+    }
+
     return repository_.removeByRollNumber(rollNumber);
 }
 

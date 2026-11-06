@@ -15,6 +15,7 @@ add_library(srm_core
     src/rbac.cpp
     src/student_service.cpp
     src/auth_service.cpp
+    src/input_validator.cpp
 )
 
 add_library(srm_grade ALIAS srm_core)
@@ -70,6 +71,11 @@ add_executable(crash_safe_saving_tests
 )
 target_link_libraries(crash_safe_saving_tests PRIVATE srm_core)
 
+add_executable(input_validator_tests
+    tests/input_validator_tests.cpp
+)
+target_link_libraries(input_validator_tests PRIVATE srm_core)
+
 enable_testing()
 
 add_test(NAME grade_service_tests COMMAND grade_service_tests)
@@ -79,3 +85,4 @@ add_test(NAME rbac_tests COMMAND rbac_tests)
 add_test(NAME student_service_tests COMMAND student_service_tests)
 add_test(NAME auth_service_tests COMMAND auth_service_tests)
 add_test(NAME crash_safe_saving_tests COMMAND crash_safe_saving_tests)
+add_test(NAME input_validator_tests COMMAND input_validator_tests)
