@@ -1,30 +1,12 @@
 #include "srm/auth_service.h"
+#include "srm/input_validator.h"
 
-#include <charconv>
 #include <chrono>
 #include <fstream>
 #include <sstream>
 #include <utility>
 
 namespace srm {
-namespace {
-
-bool parseInteger(const std::string& input, int& value) {
-    if (input.empty()) {
-        return false;
-    }
-    const char* first = input.data();
-    const char* last = first + input.size();
-    const auto parsed = std::from_chars(first, last, value);
-    return parsed.ec == std::errc{} && parsed.ptr == last;
-}
-
-bool validField(const std::string& value) {
-    return !value.empty() && value.find('\t') == std::string::npos &&
-           value.find('\n') == std::string::npos;
-}
-
-}  // namespace
 
 UserRepository::UserRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
@@ -49,7 +31,7 @@ bool UserRepository::load() {
             !std::getline(row, failedAttemptsStr, '\t') ||
             !std::getline(row, isLockedStr, '\t') ||
             !stringToRole(roleStr, user.role) ||
-            !parseInteger(failedAttemptsStr, user.failedAttempts)) {
+            !InputValidator::parseInteger(failedAttemptsStr, user.failedAttempts)) {
             users_.clear();
             return false;
         }
@@ -118,7 +100,7 @@ OperationResult AuthService::setupInitialAdmin(const std::string& username,
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "User storage is not ready."};
     }
-    if (!validField(username) || !validField(password)) {
+    if (!InputValidator::validateText(username) || !InputValidator::validateText(password)) {
         return {false, ErrorCode::InvalidInput, "Username and password must be non-empty and valid."};
     }
     if (!repository_.users().empty()) {
@@ -145,9 +127,14 @@ OperationResult AuthService::registerUser(const Session& adminSession,
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "User storage is not ready."};
     }
-    if (!validField(username) || !validField(password)) {
-        return {false, ErrorCode::InvalidInput, "Username and password must be non-empty and valid."};
-    }
+    if (!InputValidator::validateText(username) ||
+        !InputValidator::validateText(password) ||
+        (!studentRollNumber.empty() &&
+         !InputValidator::validateText(studentRollNumber))) {
+        return {false, ErrorCode::InvalidInput,
+                "Username, password, or student roll number contains invalid input."};
+
+}
     if (repository_.findUser(username) != nullptr) {
         return {false, ErrorCode::DuplicateRecord, "User with this username already exists."};
     }
@@ -163,6 +150,13 @@ LoginResult AuthService::login(const std::string& username,
                                const std::string& password) {
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "User storage is not ready.", {}};
+    }
+
+    // Validate login inputs before searching for the user.
+    if (!InputValidator::validateText(username) ||
+        !InputValidator::validateText(password)) {
+        return {false, ErrorCode::InvalidInput,
+                "Username or password contains invalid input.", {}};
     }
 
     UserAccount* user = repository_.findUser(username);
@@ -223,6 +217,12 @@ OperationResult AuthService::unlockAccount(const Session& adminSession,
     }
     if (!storageReady_) {
         return {false, ErrorCode::StorageFailure, "User storage is not ready."};
+    }
+
+    // Validate username before searching for the account.
+    if (!InputValidator::validateText(username)) {
+        return {false, ErrorCode::InvalidInput,
+                "Username contains invalid input."};
     }
 
     UserAccount* user = repository_.findUser(username);
