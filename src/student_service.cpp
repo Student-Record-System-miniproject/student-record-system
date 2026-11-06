@@ -32,19 +32,30 @@ bool StudentRepository::load() {
     while (std::getline(input, line)) {
         std::istringstream row(line);
         StudentRecord student;
+        std::string yearText;
+
         if (!std::getline(row, student.rollNumber, '\t') ||
             !std::getline(row, student.name, '\t') ||
             !std::getline(row, student.department, '\t') ||
-            !std::getline(row, student.email) ||
+            !std::getline(row, student.email, '\t') ||
+            !std::getline(row, student.dateOfBirth, '\t') ||
+            !std::getline(row, yearText, '\t') ||
+            !std::getline(row, student.contactNumber) ||
             !InputValidator::validateText(student.rollNumber) ||
             !InputValidator::validateText(student.name) ||
             !InputValidator::validateText(student.department) ||
-            !InputValidator::validateText(student.email)) {
+            !InputValidator::validateText(student.email) ||
+            !InputValidator::validateDateOfBirth(student.dateOfBirth) ||
+            !InputValidator::validateContactNumber(student.contactNumber) ||
+            !InputValidator::parseInteger(yearText, student.year) ||
+            !InputValidator::validateRange(student.year, 1, 4)) {
             records_.clear();
             return false;
         }
+
         records_.push_back(std::move(student));
     }
+
     return true;
 }
 
@@ -53,10 +64,17 @@ bool StudentRepository::save() const {
     if (!output) {
         return false;
     }
+
     for (const StudentRecord& student : records_) {
-        output << student.rollNumber << '\t' << student.name << '\t'
-               << student.department << '\t' << student.email << '\n';
+        output << student.rollNumber << '\t'
+               << student.name << '\t'
+               << student.department << '\t'
+               << student.email << '\t'
+               << student.dateOfBirth << '\t'
+               << student.year << '\t'
+               << student.contactNumber << '\n';
     }
+
     return output.good();
 }
 
@@ -152,9 +170,12 @@ OperationResult StudentService::addStudent(const Session& session,
     if (!InputValidator::validateText(student.rollNumber) ||
         !InputValidator::validateText(student.name) ||
         !InputValidator::validateText(student.department) ||
-        !InputValidator::validateText(student.email)) {
+        !InputValidator::validateText(student.email) ||
+        !InputValidator::validateDateOfBirth(student.dateOfBirth) ||
+        !InputValidator::validateRange(student.year, 1, 4) ||
+        !InputValidator::validateContactNumber(student.contactNumber)) {
         return {false, ErrorCode::InvalidInput,
-                "All student fields must be non-empty and valid."};
+                "All student fields must be valid. Year must be between 1 and 4."};
     }
 
     if (repository_.findByRollNumber(student.rollNumber) != nullptr) {
