@@ -27,6 +27,7 @@ StudentRepository::StudentRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
 bool StudentRepository::load() {
+    recoverInterruptedSave(filePath_);
     records_.clear();
     std::ifstream input(filePath_);
     if (!input) {

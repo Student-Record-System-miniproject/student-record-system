@@ -11,6 +11,7 @@ namespace {
 
 using srm::atomicWriteFile;
 using srm::atomicWriteString;
+using srm::recoverInterruptedSave;
 using srm::Role;
 using srm::StudentRecord;
 using srm::StudentRepository;
@@ -90,6 +91,73 @@ void testOriginalFilePreservedWhenReplacementFails() {
     std::filesystem::remove_all(dir);
 }
 
+// Review comment verification: Recovery from stranded backup if process crashed during swap window
+void testRecoveryFromInterruptedReplacementCrashWindow() {
+    const auto dir = std::filesystem::temp_directory_path() / "srm_crash_window_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    const auto targetFile = dir / "records.tsv";
+    const std::string committedData = "S101\tAlice\tCSE\talice@test.edu\n";
+    assert(atomicWriteString(targetFile, committedData));
+
+    // Simulate crash window: target file was renamed to .bak, and process terminated before new file was renamed
+    const auto backupFile = dir / "records.tsv.bak";
+    std::filesystem::rename(targetFile, backupFile);
+    assert(!std::filesystem::exists(targetFile));
+    assert(std::filesystem::exists(backupFile));
+
+    // Next access or recoverInterruptedSave automatically restores target file
+    assert(recoverInterruptedSave(targetFile));
+    assert(std::filesystem::exists(targetFile));
+
+    // Verify restored content is 100% intact
+    {
+        std::ifstream in(targetFile);
+        std::string content((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+        assert(content == committedData);
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+// Review comment verification: Repository auto-recovers stranded backup upon load()
+void testStrandedBackupRecoveryInRepository() {
+    const auto testFile = std::filesystem::temp_directory_path() / "srm_repo_stranded.tsv";
+    std::filesystem::remove(testFile);
+    std::filesystem::remove(std::filesystem::path(testFile.string() + ".bak"));
+
+    // Save initial students
+    {
+        StudentRepository repo(testFile);
+        assert(repo.load());
+        assert(repo.add({"S101", "Alice Smith", "CSE", "alice@test.edu"}));
+        assert(repo.add({"S102", "Bob Jones", "ECE", "bob@test.edu"}));
+    }
+
+    // Simulate crash window where target file is moved to .bak
+    const auto backupPath = std::filesystem::path(testFile.string() + ".bak");
+    std::filesystem::rename(testFile, backupPath);
+    assert(!std::filesystem::exists(testFile));
+    assert(std::filesystem::exists(backupPath));
+
+    // Boot repository after crash: load() automatically detects and recovers stranded .bak!
+    {
+        StudentRepository restarted(testFile);
+        assert(restarted.load());
+        assert(restarted.records().size() == 2);
+        assert(restarted.findByRollNumber("S101") != nullptr);
+        assert(restarted.findByRollNumber("S102") != nullptr);
+    }
+
+    // Target file now exists restored on disk
+    assert(std::filesystem::exists(testFile));
+
+    std::filesystem::remove(testFile);
+    std::filesystem::remove(backupPath);
+}
+
 void testStudentRepositoryCrashSafeRestart() {
     const auto testFile = std::filesystem::temp_directory_path() / "srm_students_crash_safe.tsv";
     std::filesystem::remove(testFile);
@@ -158,6 +226,8 @@ void testUserRepositoryCrashSafeSaving() {
 int main() {
     testAtomicWriteAndForcedInterruption();
     testOriginalFilePreservedWhenReplacementFails();
+    testRecoveryFromInterruptedReplacementCrashWindow();
+    testStrandedBackupRecoveryInRepository();
     testStudentRepositoryCrashSafeRestart();
     testUserRepositoryCrashSafeSaving();
     return 0;

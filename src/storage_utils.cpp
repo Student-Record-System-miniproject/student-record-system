@@ -21,14 +21,64 @@ std::string generateUniqueTempPath(const std::filesystem::path& targetFilePath) 
            std::to_string(seq) + "." + std::to_string(rnd);
 }
 
-std::string generateUniqueBackupPath(const std::filesystem::path& targetFilePath) {
-    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto seq = ++g_atomicSequence;
-    return targetFilePath.string() + ".bak." + std::to_string(now) + "." +
-           std::to_string(seq);
-}
-
 }  // namespace
+
+bool recoverInterruptedSave(const std::filesystem::path& targetFilePath) {
+    std::error_code ec;
+    if (std::filesystem::exists(targetFilePath, ec)) {
+        // Target file exists; clean up any stale backup
+        const auto defaultBak = targetFilePath.string() + ".bak";
+        if (std::filesystem::exists(defaultBak, ec)) {
+            std::filesystem::remove(defaultBak, ec);
+        }
+        return true;
+    }
+
+    // Target file is missing; check for default backup file (.bak)
+    const auto defaultBak = targetFilePath.string() + ".bak";
+    if (std::filesystem::exists(defaultBak, ec)) {
+        std::filesystem::rename(defaultBak, targetFilePath, ec);
+        if (!ec) {
+            return true;
+        }
+        // Fallback to copy if rename fails across partitions/locks
+        std::filesystem::copy_file(defaultBak, targetFilePath,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            std::error_code remEc;
+            std::filesystem::remove(defaultBak, remEc);
+            return true;
+        }
+    }
+
+    // Also check for any timestamped backup files targetFilePath.bak.* in parent directory
+    const auto parent = targetFilePath.parent_path();
+    if (!parent.empty() && std::filesystem::exists(parent, ec)) {
+        const std::string prefix = targetFilePath.filename().string() + ".bak.";
+        std::filesystem::path candidate;
+        for (const auto& entry : std::filesystem::directory_iterator(parent, ec)) {
+            if (entry.path().filename().string().rfind(prefix, 0) == 0) {
+                candidate = entry.path();
+                break;
+            }
+        }
+        if (!candidate.empty()) {
+            std::filesystem::rename(candidate, targetFilePath, ec);
+            if (!ec) {
+                return true;
+            }
+            std::filesystem::copy_file(candidate, targetFilePath,
+                                       std::filesystem::copy_options::overwrite_existing, ec);
+            if (!ec) {
+                std::error_code remEc;
+                std::filesystem::remove(candidate, remEc);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
 
 bool atomicWriteFile(const std::filesystem::path& targetFilePath,
                      const std::function<bool(std::ostream&)>& writeCallback) {
@@ -44,6 +94,9 @@ bool atomicWriteFile(const std::filesystem::path& targetFilePath,
             return false;
         }
     }
+
+    // Check and recover any interrupted save from a previous crash window
+    recoverInterruptedSave(targetFilePath);
 
     // Uniquely and safely generate temporary path using clock, atomic counter, and random device
     const auto tempPath = generateUniqueTempPath(targetFilePath);
@@ -69,29 +122,49 @@ bool atomicWriteFile(const std::filesystem::path& targetFilePath,
         }
     }
 
-    // Transactional replacement with guaranteed rollback:
+    // Transactional replacement with guaranteed rollback and crash recovery:
     // If targetFilePath already exists, safely preserve it in a backup first.
     // The original file is NEVER deleted before replacement is guaranteed to succeed.
     const bool targetExists = std::filesystem::exists(targetFilePath, ec);
-    std::filesystem::path backupPath;
+    const auto backupPath = std::filesystem::path(targetFilePath.string() + ".bak");
 
     if (targetExists) {
-        backupPath = generateUniqueBackupPath(targetFilePath);
+        std::filesystem::remove(backupPath, ec);
         std::filesystem::rename(targetFilePath, backupPath, ec);
         if (ec) {
-            // Could not create backup; leave targetFilePath completely untouched and abort
-            std::filesystem::remove(tempPath, ec);
-            return false;
+            // Rename failed; attempt fallback copy before giving up
+            std::filesystem::copy_file(targetFilePath, backupPath,
+                                       std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                // Could not create backup; leave targetFilePath completely untouched and abort
+                std::filesystem::remove(tempPath, ec);
+                return false;
+            }
+            std::filesystem::remove(targetFilePath, ec);
         }
     }
 
     // Move tempPath into targetFilePath
     std::filesystem::rename(tempPath, targetFilePath, ec);
     if (ec) {
+        // Direct rename failed; try copy fallback (e.g. across mount points)
+        std::filesystem::copy_file(tempPath, targetFilePath,
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) {
+            std::filesystem::remove(tempPath, ec);
+        }
+    }
+
+    if (ec) {
         // Replacement failed: immediately restore original file from backup!
         if (targetExists) {
             std::error_code restoreEc;
             std::filesystem::rename(backupPath, targetFilePath, restoreEc);
+            if (restoreEc) {
+                // If rename restore fails, execute copy fallback restoration
+                std::filesystem::copy_file(backupPath, targetFilePath,
+                                           std::filesystem::copy_options::overwrite_existing, restoreEc);
+            }
         }
         std::filesystem::remove(tempPath, ec);
         return false;

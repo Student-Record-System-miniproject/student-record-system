@@ -31,6 +31,7 @@ UserRepository::UserRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
 bool UserRepository::load() {
+    recoverInterruptedSave(filePath_);
     users_.clear();
     std::ifstream input(filePath_);
     if (!input) {
