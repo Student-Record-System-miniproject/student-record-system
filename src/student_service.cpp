@@ -1,5 +1,6 @@
 #include "srm/student_service.h"
 #include "srm/audit_service.h"
+#include "srm/storage_utils.h"
 #include "srm/input_validator.h"
 
 #include <algorithm>
@@ -23,6 +24,7 @@ StudentRepository::StudentRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
 bool StudentRepository::load() {
+    recoverInterruptedSave(filePath_);
     records_.clear();
     std::ifstream input(filePath_);
     if (!input) {
@@ -50,15 +52,13 @@ bool StudentRepository::load() {
 }
 
 bool StudentRepository::save() const {
-    std::ofstream output(filePath_, std::ios::trunc);
-    if (!output) {
-        return false;
-    }
-    for (const StudentRecord& student : records_) {
-        output << student.rollNumber << '\t' << student.name << '\t'
-               << student.department << '\t' << student.email << '\n';
-    }
-    return output.good();
+    return atomicWriteFile(filePath_, [&](std::ostream& output) {
+        for (const StudentRecord& student : records_) {
+            output << student.rollNumber << '\t' << student.name << '\t'
+                   << student.department << '\t' << student.email << '\n';
+        }
+        return output.good();
+    });
 }
 
 bool StudentRepository::add(StudentRecord student) {

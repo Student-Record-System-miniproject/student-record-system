@@ -13,11 +13,13 @@ std::string currentUtcTimestamp() {
     const auto now = std::chrono::system_clock::now();
     const auto tt = std::chrono::system_clock::to_time_t(now);
     std::tm utcTm{};
-#if defined(_MSC_VER)
+
+#if defined(_WIN32)
     gmtime_s(&utcTm, &tt);
 #else
     gmtime_r(&tt, &utcTm);
 #endif
+
     std::ostringstream ss;
     ss << std::put_time(&utcTm, "%Y-%m-%dT%H:%M:%SZ");
     return ss.str();
