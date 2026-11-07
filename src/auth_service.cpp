@@ -1,4 +1,5 @@
 #include "srm/auth_service.h"
+#include "srm/storage_utils.h"
 #include "srm/input_validator.h"
 
 #include <chrono>
@@ -12,6 +13,7 @@ UserRepository::UserRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
 bool UserRepository::load() {
+    recoverInterruptedSave(filePath_);
     users_.clear();
     std::ifstream input(filePath_);
     if (!input) {
@@ -43,17 +45,15 @@ bool UserRepository::load() {
 }
 
 bool UserRepository::save() const {
-    std::ofstream output(filePath_, std::ios::trunc);
-    if (!output) {
-        return false;
-    }
-    for (const UserAccount& user : users_) {
-        output << user.username << '\t' << user.passwordHash << '\t'
-               << roleToString(user.role) << '\t' << user.failedAttempts << '\t'
-               << (user.isLocked ? "1" : "0") << '\t'
-               << user.studentRollNumber << '\n';
-    }
-    return output.good();
+    return atomicWriteFile(filePath_, [&](std::ostream& output) {
+        for (const UserAccount& user : users_) {
+            output << user.username << '\t' << user.passwordHash << '\t'
+                   << roleToString(user.role) << '\t' << user.failedAttempts << '\t'
+                   << (user.isLocked ? "1" : "0") << '\t'
+                   << user.studentRollNumber << '\n';
+        }
+        return output.good();
+    });
 }
 
 bool UserRepository::addUser(UserAccount user) {
