@@ -8,12 +8,29 @@
 #include <fstream>
 #include <sstream>
 #include <utility>
+#include <iomanip>
+#include <map>
 
 namespace srm {
 namespace {
 
 OperationResult failure(ErrorCode error, std::string message) {
     return {false, error, std::move(message)};
+}
+
+struct GradeInfo {
+    std::string letterGrade;
+    double gradePoint;
+};
+
+GradeInfo calculateGrade(double marks) {
+    if (marks >= 90) return {"S", 10.0};
+    if (marks >= 80) return {"A", 9.0};
+    if (marks >= 70) return {"B", 8.0};
+    if (marks >= 60) return {"C", 7.0};
+    if (marks >= 50) return {"D", 6.0};
+    if (marks >= 40) return {"E", 5.0};
+    return {"F", 0.0};
 }
 
 }  // namespace
@@ -151,11 +168,14 @@ OperationResult GradeService::enterOrUpdateMarks(
     return {true, ErrorCode::None, "Grade saved."};
 }
 
-ReportResult GradeService::generateReportCard(const Session& session,
-                                              const std::string& rollNumber) const {
+ReportResult GradeService::generateReportCard(
+    const Session& session,
+    const std::string& rollNumber) const {
+
     const auto op = (session.role == Role::Student)
                         ? Operation::ViewOwnReportCard
                         : Operation::ViewAnyStudentReportCard;
+
     const auto auth = AccessController::authorize(session, op, rollNumber);
     if (!auth.success) {
         return {false, auth.error, auth.message, {}};
@@ -167,17 +187,91 @@ ReportResult GradeService::generateReportCard(const Session& session,
     }
 
     if (!studentExists_ || !studentExists_(rollNumber)) {
-        return {false, ErrorCode::StudentNotFound, "Student was not found.", {}};
+        return {false, ErrorCode::StudentNotFound,
+                "Student was not found.", {}};
     }
 
     std::ostringstream report;
+    report << std::fixed << std::setprecision(2);
+
     report << "Report card for " << rollNumber << '\n';
+
+    std::map<int, std::vector<const MarkRecord*>> semesterRecords;
+
+    int overallTotal = 0;
+    int overallSubjects = 0;
+    double overallGradePoints = 0.0;
+
     for (const MarkRecord& record : repository_.records()) {
         if (record.rollNumber == rollNumber) {
-            report << record.subject << " | Semester " << record.semester
-                   << " | Marks " << record.marks << '\n';
+            semesterRecords[record.semester].push_back(&record);
         }
     }
+
+    if (semesterRecords.empty()) {
+        report << "No marks available.\n";
+        return {true, ErrorCode::None, "Report generated.", report.str()};
+    }
+
+    // Calculate results for each semester.
+    for (const auto& semester : semesterRecords) {
+        int semesterTotal = 0;
+        double semesterGradePoints = 0.0;
+
+        report << "\nSemester " << semester.first << '\n';
+
+        for (const MarkRecord* record : semester.second) {
+            const GradeInfo grade = calculateGrade(record->marks);
+
+            report << record->subject
+                   << " | Marks " << record->marks
+                   << " | Grade " << grade.letterGrade
+                   << " | Grade Points " << grade.gradePoint << '\n';
+
+            semesterTotal += record->marks;
+            semesterGradePoints += grade.gradePoint;
+        }
+
+        const int subjectCount =
+            static_cast<int>(semester.second.size());
+
+        const double percentage =
+            static_cast<double>(semesterTotal) / subjectCount;
+
+        const double gpa =
+            semesterGradePoints / subjectCount;
+
+        const GradeInfo overallSemesterGrade =
+            calculateGrade(percentage);
+
+        report << "Semester Percentage: " << percentage << "%\n";
+        report << "Semester Grade: "
+               << overallSemesterGrade.letterGrade << '\n';
+        report << "Semester GPA: " << gpa << '\n';
+
+        overallTotal += semesterTotal;
+        overallSubjects += subjectCount;
+        overallGradePoints += semesterGradePoints;
+    }
+
+    // Calculate the overall result across all semesters.
+    const double overallPercentage =
+        static_cast<double>(overallTotal) / overallSubjects;
+
+    const double overallGPA =
+        overallGradePoints / overallSubjects;
+
+    const GradeInfo overallGrade =
+        calculateGrade(overallPercentage);
+
+    report << "\nOverall Result\n";
+    report << "Overall Percentage: "
+           << overallPercentage << "%\n";
+    report << "Overall Grade: "
+           << overallGrade.letterGrade << '\n';
+    report << "Overall GPA: "
+           << overallGPA << '\n';
+
     return {true, ErrorCode::None, "Report generated.", report.str()};
 }
 
