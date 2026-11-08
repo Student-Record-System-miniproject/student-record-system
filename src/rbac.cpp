@@ -71,7 +71,7 @@ OperationResult AccessController::authorize(const Session& session,
                                             const std::string& targetRollNumber) {
     if (!session.authenticated) {
         SecurityEvent event{session.role, operation, session.studentRollNumber,
-                            targetRollNumber, false, "Unauthenticated session"};
+                            targetRollNumber, false, "Unauthenticated session", session.username};
         logEvent(event);
         return {false, ErrorCode::AccessDenied, "Authentication is required."};
     }
@@ -79,7 +79,7 @@ OperationResult AccessController::authorize(const Session& session,
     if (!isAuthorized(session, operation, targetRollNumber)) {
         SecurityEvent event{session.role, operation, session.studentRollNumber,
                             targetRollNumber, false,
-                            "Forbidden operation for role"};
+                            "Forbidden operation for role", session.username};
         logEvent(event);
         return {false, ErrorCode::AccessDenied,
                 "Access denied: Operation not authorized for current role."};

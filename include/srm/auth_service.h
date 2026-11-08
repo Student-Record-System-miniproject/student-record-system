@@ -10,6 +10,8 @@
 
 namespace srm {
 
+class AuditService;
+
 struct UserAccount {
     std::string username;
     std::string passwordHash;
@@ -77,10 +79,16 @@ public:
     bool isAccountLocked(const std::string& username) const;
     int getFailedAttempts(const std::string& username) const;
 
+    void setAuditService(AuditService* auditService, bool requireAudit = false);
+    AuditService* auditService() const;
+    bool isAuditRequired() const;
+
 private:
     UserRepository repository_;
     unsigned int hashIterations_;
     bool storageReady_;
+    AuditService* auditService_ = nullptr;
+    bool requireAudit_ = false;
 };
 
 }  // namespace srm

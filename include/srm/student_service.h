@@ -10,13 +10,17 @@
 
 namespace srm {
 
+class AuditService;
+
 struct StudentRecord {
     std::string rollNumber;
     std::string name;
     std::string department;
     std::string email;
+    std::string dateOfBirth;
+    int year = 0;
+    std::string contactNumber;
 };
-
 class StudentRepository {
 public:
     explicit StudentRepository(std::filesystem::path filePath);
@@ -73,12 +77,22 @@ public:
     std::vector<StudentRecord> searchStudents(const Session& session,
                                               const std::string& query) const;
 
+    // SRM-F-015: List all students in ascending roll-number order.
+    // Only Administrator and Teacher may access this list.
+    std::vector<StudentRecord> listStudents(const Session& session) const;
+
     bool exists(const std::string& rollNumber) const;
+
+    void setAuditService(AuditService* auditService, bool requireAudit = false);
+    AuditService* auditService() const;
+    bool isAuditRequired() const;
 
 private:
     StudentRepository repository_;
     CascadeDeleteHook cascadeDelete_;
     bool storageReady_;
+    AuditService* auditService_ = nullptr;
+    bool requireAudit_ = false;
 };
 
 }  // namespace srm
