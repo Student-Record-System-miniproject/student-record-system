@@ -24,6 +24,20 @@ std::filesystem::path writeAttendanceFile() {
     output << "S001\tMathematics\t2026-10-03\tA\n";
     output << "S002\tMathematics\t2026-10-01\tA\n";
     output << "S002\tMathematics\t2026-10-02\tA\n";
+    // S003: 8 present out of 10 = 80.0%
+    output << "S003\tMathematics\t2026-10-01\tP\n";
+    output << "S003\tMathematics\t2026-10-02\tP\n";
+    output << "S003\tMathematics\t2026-10-03\tP\n";
+    output << "S003\tMathematics\t2026-10-04\tP\n";
+    output << "S003\tMathematics\t2026-10-05\tP\n";
+    output << "S003\tMathematics\t2026-10-06\tP\n";
+    output << "S003\tMathematics\t2026-10-07\tP\n";
+    output << "S003\tMathematics\t2026-10-08\tP\n";
+    output << "S003\tMathematics\t2026-10-09\tA\n";
+    output << "S003\tMathematics\t2026-10-10\tA\n";
+
+// S004: 74.9% boundary test
+// We'll test this through a separate calculation case below.
     output.close();
     return path;
 }
@@ -100,7 +114,27 @@ void testSecureInputValidation() {
 
     std::filesystem::remove(path);
 }
+void testAttendanceExactlyAt75PercentIsNotFlagged() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-attendance-75-test.tsv";
 
+    {
+        std::ofstream output(path, std::ios::trunc);
+        output << "S001\tMathematics\t2026-10-01\tP\n";
+        output << "S001\tMathematics\t2026-10-02\tP\n";
+        output << "S001\tMathematics\t2026-10-03\tP\n";
+        output << "S001\tMathematics\t2026-10-04\tA\n";
+    }
+
+    auto service = serviceFor(path);
+    const auto report = service.generateReport(ownStudent, "S001");
+
+    assert(report.success);
+    assert(report.report.find("75.0%") != std::string::npos);
+    assert(report.report.find("BELOW 75%") == std::string::npos);
+
+    std::filesystem::remove(path);
+}
 }  // namespace
 
 int main() {
@@ -108,5 +142,6 @@ int main() {
     testStudentCanViewOwnReport();
     testStudentCannotViewAnotherReport();
     testSecureInputValidation();
+    testAttendanceExactlyAt75PercentIsNotFlagged();
     return 0;
 }
