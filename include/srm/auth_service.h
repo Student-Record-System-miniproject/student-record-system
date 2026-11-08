@@ -19,6 +19,7 @@ struct UserAccount {
     int failedAttempts = 0;
     bool isLocked = false;
     std::string studentRollNumber = "";
+    bool isActive = true;
 };
 
 struct LoginResult {
@@ -53,6 +54,7 @@ public:
     // Allowed only when no user accounts exist in the repository.
     OperationResult setupInitialAdmin(const std::string& username,
                                       const std::string& password);
+    bool hasUsers() const;
 
     // SRM-SR-002: User registration requires an Administrator session (Operation::RegisterUser)
     OperationResult registerUser(const Session& adminSession,
@@ -75,6 +77,12 @@ public:
     // - Persists unlocked state
     OperationResult unlockAccount(const Session& adminSession,
                                   const std::string& username);
+    OperationResult deactivateAccount(const Session& adminSession,
+                                  const std::string& username);
+
+    OperationResult resetPassword(const Session& adminSession,
+                                  const std::string& username,
+                                  const std::string& newPassword);
 
     bool isAccountLocked(const std::string& username) const;
     int getFailedAttempts(const std::string& username) const;
