@@ -11,10 +11,15 @@ bool AccessController::isAuthorized(const Session& session,
                                     Operation operation,
                                     const std::string& targetRollNumber) {
     if (!session.authenticated) {
-        return false;
-    }
+    return false;
+}
 
-    switch (session.role) {
+// SRM-F-004: Every authenticated role can change its own password.
+if (operation == Operation::ChangeOwnPassword) {
+    return true;
+}
+
+switch (session.role)  {
         case Role::Administrator:
             switch (operation) {
                 case Operation::AddStudent:
@@ -54,8 +59,6 @@ bool AccessController::isAuthorized(const Session& session,
                     // Student can access only their own roll number
                     return !session.studentRollNumber.empty() &&
                            session.studentRollNumber == targetRollNumber;
-                case Operation::ChangeOwnPassword:
-                    return true;
                 default:
                     // Student cannot enter marks, view other students' records, or manage system
                     return false;
