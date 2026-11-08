@@ -1,6 +1,7 @@
 #include "srm/attendance_service.h"
 #include "srm/report_export.h"
 #include "srm/rbac.h"
+#include "srm/storage_utils.h"
 #include "srm/input_validator.h"
 
 #include <algorithm>
@@ -31,6 +32,7 @@ AttendanceRepository::AttendanceRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
 bool AttendanceRepository::load() {
+    recoverInterruptedSave(filePath_);
     records_.clear();
     std::ifstream input(filePath_);
     if (!input) {
@@ -59,16 +61,14 @@ bool AttendanceRepository::load() {
 }
 
 bool AttendanceRepository::save() const {
-    std::ofstream output(filePath_, std::ios::trunc);
-    if (!output) {
-        return false;
-    }
-    for (const AttendanceRecord& record : records_) {
-        output << record.rollNumber << '\t' << record.subject << '\t'
-               << record.date << '\t'
-               << (record.status == AttendanceStatus::Present ? "P" : "A") << '\n';
-    }
-    return output.good();
+    return atomicWriteFile(filePath_, [&](std::ostream& output) {
+        for (const AttendanceRecord& record : records_) {
+            output << record.rollNumber << '\t' << record.subject << '\t'
+                   << record.date << '\t'
+                   << (record.status == AttendanceStatus::Present ? "P" : "A") << '\n';
+        }
+        return output.good();
+    });
 }
 
 bool AttendanceRepository::removeByRollNumber(const std::string& rollNumber) {

@@ -3,6 +3,8 @@
 #include <cassert>
 #include <filesystem>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -19,6 +21,13 @@ GradeService serviceFor(const std::filesystem::path& path) {
         path,
         [](const std::string& rollNumber) { return rollNumber == "S001"; },
         [](const std::string& subject) { return subject == "Mathematics"; });
+}
+
+GradeService resultServiceFor(const std::filesystem::path& path) {
+    return GradeService(
+        path,
+        [](const std::string& rollNumber) { return rollNumber == "S001"; },
+        [](const std::string&) { return true; });
 }
 
 void testBoundaryMarksAreAccepted() {
@@ -118,6 +127,103 @@ void testSecureInputValidation() {
     std::filesystem::remove(path);
 }
 
+void testGradeBoundaries() {
+    const auto path = std::filesystem::temp_directory_path() / "srm-grade-scale.tsv";
+    std::filesystem::remove(path);
+
+    auto service = resultServiceFor(path);
+
+    const std::vector<std::pair<int, std::string>> cases = {
+        {100, "S"}, {90, "S"},
+        {89, "A"}, {80, "A"},
+        {79, "B"}, {70, "B"},
+        {69, "C"}, {60, "C"},
+        {59, "D"}, {50, "D"},
+        {49, "E"}, {40, "E"},
+        {39, "F"}, {0, "F"}
+    };
+
+    int subjectNumber = 1;
+
+    for (const auto& testCase : cases) {
+        const std::string subject = "Subject" + std::to_string(subjectNumber++);
+
+        assert(service.enterOrUpdateMarks(
+            teacher, "S001", subject, 1, std::to_string(testCase.first)).success);
+
+        const auto report = service.generateReportCard(teacher, "S001");
+
+        assert(report.success);
+
+        const std::string expected =
+            subject + " | Marks " + std::to_string(testCase.first) +
+            " | Grade " + testCase.second;
+
+        assert(report.report.find(expected) != std::string::npos);
+    }
+
+    std::filesystem::remove(path);
+}
+
+void testPercentageAndGPA() {
+    const auto path = std::filesystem::temp_directory_path() / "srm-grade-calculation.tsv";
+    std::filesystem::remove(path);
+
+    auto service = resultServiceFor(path);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Mathematics", 1, "80").success);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Physics", 1, "70").success);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Chemistry", 1, "90").success);
+
+    const auto report = service.generateReportCard(teacher, "S001");
+
+    assert(report.success);
+    assert(report.report.find("Semester Percentage: 80.00%") != std::string::npos);
+    assert(report.report.find("Semester Grade: A") != std::string::npos);
+    assert(report.report.find("Semester GPA: 9.00") != std::string::npos);
+
+    assert(report.report.find("Overall Percentage: 80.00%") != std::string::npos);
+    assert(report.report.find("Overall Grade: A") != std::string::npos);
+    assert(report.report.find("Overall GPA: 9.00") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+void testMultipleSemesterCalculations() {
+    const auto path = std::filesystem::temp_directory_path() / "srm-grade-semesters.tsv";
+    std::filesystem::remove(path);
+
+    auto service = resultServiceFor(path);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Mathematics", 1, "80").success);
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Physics", 1, "70").success);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Chemistry", 2, "90").success);
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Biology", 2, "60").success);
+
+    const auto report = service.generateReportCard(teacher, "S001");
+
+    assert(report.success);
+
+    assert(report.report.find("Semester 1") != std::string::npos);
+    assert(report.report.find("Semester 2") != std::string::npos);
+
+    assert(report.report.find("Overall Percentage: 75.00%") != std::string::npos);
+    assert(report.report.find("Overall Grade: B") != std::string::npos);
+    assert(report.report.find("Overall GPA: 8.50") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -126,5 +232,8 @@ int main() {
     testUpdateReplacesAndPersists();
     testPermissionsAndIdentifiersAreValidated();
     testSecureInputValidation();
+    testGradeBoundaries();
+    testPercentageAndGPA();
+    testMultipleSemesterCalculations();
     return 0;
 }

@@ -1,4 +1,6 @@
 #include "srm/student_service.h"
+#include "srm/audit_service.h"
+#include "srm/storage_utils.h"
 #include "srm/input_validator.h"
 
 #include <algorithm>
@@ -22,6 +24,7 @@ StudentRepository::StudentRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
 bool StudentRepository::load() {
+    recoverInterruptedSave(filePath_);
     records_.clear();
     std::ifstream input(filePath_);
     if (!input) {
@@ -60,22 +63,18 @@ bool StudentRepository::load() {
 }
 
 bool StudentRepository::save() const {
-    std::ofstream output(filePath_, std::ios::trunc);
-    if (!output) {
-        return false;
-    }
-
-    for (const StudentRecord& student : records_) {
-        output << student.rollNumber << '\t'
-               << student.name << '\t'
-               << student.department << '\t'
-               << student.email << '\t'
-               << student.dateOfBirth << '\t'
-               << student.year << '\t'
-               << student.contactNumber << '\n';
-    }
-
-    return output.good();
+    return atomicWriteFile(filePath_, [&](std::ostream& output) {
+        for (const StudentRecord& student : records_) {
+            output << student.rollNumber << '\t'
+                   << student.name << '\t'
+                   << student.department << '\t'
+                   << student.email << '\t'
+                   << student.dateOfBirth << '\t'
+                   << student.year << '\t'
+                   << student.contactNumber << '\n';
+        }
+        return output.good();
+    });
 }
 
 bool StudentRepository::add(StudentRecord student) {
@@ -181,8 +180,17 @@ OperationResult StudentService::addStudent(const Session& session,
     if (repository_.findByRollNumber(student.rollNumber) != nullptr) {
         return {false, ErrorCode::DuplicateRecord, "Student with this roll number already exists."};
     }
+    const std::string rollNumber = student.rollNumber;
+    const std::string studentName = student.name;
     if (!repository_.add(std::move(student))) {
         return {false, ErrorCode::StorageFailure, "Failed to save student record to storage."};
+    }
+    if (auditService_) {
+        const bool logged = auditService_->logOperation(session, "CREATE_STUDENT", rollNumber, true, "Created student " + studentName);
+        if (!logged && requireAudit_) {
+            repository_.remove(rollNumber);
+            return {false, ErrorCode::StorageFailure, "Operation aborted: Audit logging failure (fail-secure policy)"};
+        }
     }
     return {true, ErrorCode::None, "Student record created."};
 }
@@ -214,6 +222,12 @@ OperationResult StudentService::updateStudent(const Session& session,
 
     if (!repository_.update(rollNumber, newName, newDepartment, newEmail)) {
         return {false, ErrorCode::StorageFailure, "Failed to save updated student record."};
+    }
+    if (auditService_) {
+        const bool logged = auditService_->logOperation(session, "UPDATE_STUDENT", rollNumber, true, "Updated student record");
+        if (!logged && requireAudit_) {
+            return {false, ErrorCode::StorageFailure, "Operation aborted: Audit logging failure (fail-secure policy)"};
+        }
     }
     return {true, ErrorCode::None, "Student record updated successfully."};
 }
@@ -263,6 +277,15 @@ OperationResult StudentService::deleteStudent(const Session& session,
         }
     }
 
+    if (auditService_) {
+        const bool logged = auditService_->logOperation(session, "DELETE_STUDENT", rollNumber, true,
+                                                        "Student record and associated records deleted");
+        if (!logged && requireAudit_) {
+            repository_.add(studentSnapshot);
+            return {false, ErrorCode::StorageFailure, "Operation aborted: Audit logging failure (fail-secure policy)"};
+        }
+    }
+
     return {true, ErrorCode::None, "Student record and associated records deleted."};
 }
 
@@ -292,12 +315,51 @@ std::vector<StudentRecord> StudentService::searchStudents(const Session& session
     return repository_.searchByName(query);
 }
 
+std::vector<StudentRecord> StudentService::listStudents(
+    const Session& session) const {
+
+    // Only authenticated Administrators and Teachers can list students.
+    if (!session.authenticated ||
+        (session.role != Role::Administrator &&
+         session.role != Role::Teacher)) {
+        return {};
+    }
+
+    if (!storageReady_) {
+        return {};
+    }
+
+    // Copy all student records.
+    std::vector<StudentRecord> students = repository_.records();
+
+    // Sort by ascending roll number.
+    std::sort(students.begin(), students.end(),
+              [](const StudentRecord& a, const StudentRecord& b) {
+                  return a.rollNumber < b.rollNumber;
+              });
+
+    return students;
+}
+
 bool StudentService::exists(const std::string& rollNumber) const {
     if (!InputValidator::validateText(rollNumber)) {
         return false;
     }
 
     return repository_.findByRollNumber(rollNumber) != nullptr;
+}
+
+void StudentService::setAuditService(AuditService* auditService, bool requireAudit) {
+    auditService_ = auditService;
+    requireAudit_ = requireAudit;
+}
+
+AuditService* StudentService::auditService() const {
+    return auditService_;
+}
+
+bool StudentService::isAuditRequired() const {
+    return requireAudit_;
 }
 
 }  // namespace srm
