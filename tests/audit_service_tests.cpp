@@ -3,6 +3,9 @@
 #include "srm/rbac.h"
 #include "srm/student_service.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <filesystem>
 #include <fstream>

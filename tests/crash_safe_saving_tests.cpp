@@ -2,6 +2,9 @@
 #include "srm/student_service.h"
 #include "srm/auth_service.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -28,7 +31,8 @@ void testAtomicWriteAndForcedInterruption() {
 
     // Step 1: Initial successful save
     const std::string initialData = "INITIAL_RECORD_1\tDATA\nINITIAL_RECORD_2\tDATA\n";
-    assert(atomicWriteString(targetFile, initialData));
+    const bool initialSaveOk = atomicWriteString(targetFile, initialData);
+    assert(initialSaveOk);
     assert(std::filesystem::exists(targetFile));
 
     // Verify initial content
@@ -71,7 +75,8 @@ void testOriginalFilePreservedWhenReplacementFails() {
 
     const auto targetFile = dir / "important_data.txt";
     const std::string originalData = "IMPORTANT_ORIGINAL_DATA_MUST_NEVER_BE_LOST\n";
-    assert(atomicWriteString(targetFile, originalData));
+    const bool saveOriginalOk = atomicWriteString(targetFile, originalData);
+    assert(saveOriginalOk);
 
     // Simulate an aborted save before file swap completes
     const bool res = atomicWriteFile(targetFile, [](std::ostream&) {
@@ -99,7 +104,8 @@ void testRecoveryFromInterruptedReplacementCrashWindow() {
 
     const auto targetFile = dir / "records.tsv";
     const std::string committedData = "S101\tAlice\tCSE\talice@test.edu\n";
-    assert(atomicWriteString(targetFile, committedData));
+    const bool saveCommittedOk = atomicWriteString(targetFile, committedData);
+    assert(saveCommittedOk);
 
     // Simulate crash window: target file was renamed to .bak, and process terminated before new file was renamed
     const auto backupFile = dir / "records.tsv.bak";
@@ -108,7 +114,8 @@ void testRecoveryFromInterruptedReplacementCrashWindow() {
     assert(std::filesystem::exists(backupFile));
 
     // Next access or recoverInterruptedSave automatically restores target file
-    assert(recoverInterruptedSave(targetFile));
+    const bool recoveryOk = recoverInterruptedSave(targetFile);
+    assert(recoveryOk);
     assert(std::filesystem::exists(targetFile));
 
     // Verify restored content is 100% intact
@@ -131,9 +138,12 @@ void testStrandedBackupRecoveryInRepository() {
     // Save initial students
     {
         StudentRepository repo(testFile);
-        assert(repo.load());
-        assert(repo.add({"S101", "Alice Smith", "CSE", "alice@test.edu"}));
-        assert(repo.add({"S102", "Bob Jones", "ECE", "bob@test.edu"}));
+        const bool loadOk = repo.load();
+        assert(loadOk);
+        const bool add1Ok = repo.add({"S101", "Alice Smith", "CSE", "alice@test.edu"});
+        assert(add1Ok);
+        const bool add2Ok = repo.add({"S102", "Bob Jones", "ECE", "bob@test.edu"});
+        assert(add2Ok);
     }
 
     // Simulate crash window where target file is moved to .bak
@@ -145,7 +155,8 @@ void testStrandedBackupRecoveryInRepository() {
     // Boot repository after crash: load() automatically detects and recovers stranded .bak!
     {
         StudentRepository restarted(testFile);
-        assert(restarted.load());
+        const bool restartedLoadOk = restarted.load();
+        assert(restartedLoadOk);
         assert(restarted.records().size() == 2);
         assert(restarted.findByRollNumber("S101") != nullptr);
         assert(restarted.findByRollNumber("S102") != nullptr);
@@ -165,9 +176,12 @@ void testStudentRepositoryCrashSafeRestart() {
     // Session 1: Add initial students
     {
         StudentRepository repo(testFile);
-        assert(repo.load());
-        assert(repo.add({"S101", "Alice Smith", "CSE", "alice@test.edu"}));
-        assert(repo.add({"S102", "Bob Jones", "ECE", "bob@test.edu"}));
+        const bool load1Ok = repo.load();
+        assert(load1Ok);
+        const bool add1Ok = repo.add({"S101", "Alice Smith", "CSE", "alice@test.edu"});
+        assert(add1Ok);
+        const bool add2Ok = repo.add({"S102", "Bob Jones", "ECE", "bob@test.edu"});
+        assert(add2Ok);
     }
 
     // Simulate an external partial write failure to a temp file
@@ -183,7 +197,8 @@ void testStudentRepositoryCrashSafeRestart() {
     // Session 2: Reload after simulated failure / restart (TC-Rel-01)
     {
         StudentRepository restartedRepo(testFile);
-        assert(restartedRepo.load());
+        const bool load2Ok = restartedRepo.load();
+        assert(load2Ok);
         assert(restartedRepo.records().size() == 2);
 
         const auto* alice = restartedRepo.findByRollNumber("S101");
@@ -205,14 +220,17 @@ void testUserRepositoryCrashSafeSaving() {
     // Add valid user
     {
         UserRepository repo(testFile);
-        assert(repo.load());
-        assert(repo.addUser({"admin_user", "hashed_secret", Role::Administrator, 0, false, ""}));
+        const bool load1Ok = repo.load();
+        assert(load1Ok);
+        const bool addUserOk = repo.addUser({"admin_user", "hashed_secret", Role::Administrator, 0, false, ""});
+        assert(addUserOk);
     }
 
     // Restart repository and verify record exists
     {
         UserRepository restarted(testFile);
-        assert(restarted.load());
+        const bool load2Ok = restarted.load();
+        assert(load2Ok);
         const auto* user = restarted.findUser("admin_user");
         assert(user != nullptr);
         assert(user->role == Role::Administrator);
