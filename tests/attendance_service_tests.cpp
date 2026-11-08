@@ -100,6 +100,40 @@ void testSecureInputValidation() {
 
     std::filesystem::remove(path);
 }
+void testAttendanceDeletionPersistsAcrossRestart() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-attendance-restart.tsv";
+
+    std::filesystem::remove(path);
+
+    // First, prepare attendance records as if they already exist.
+    {
+        std::ofstream output(path);
+        output << "S001\tMathematics\t2026-10-01\tP\n";
+        output << "S002\tMathematics\t2026-10-01\tA\n";
+    }
+
+    // First run: load records and delete S001's attendance.
+    {
+        srm::AttendanceRepository repository(path);
+
+        assert(repository.load());
+        assert(repository.records().size() == 2);
+
+        assert(repository.removeByRollNumber("S001"));
+    }
+
+    // Second run: verify the deletion was saved.
+    {
+        srm::AttendanceRepository restartedRepository(path);
+
+        assert(restartedRepository.load());
+        assert(restartedRepository.records().size() == 1);
+        assert(restartedRepository.records()[0].rollNumber == "S002");
+    }
+
+    std::filesystem::remove(path);
+}
 
 }  // namespace
 
@@ -108,5 +142,6 @@ int main() {
     testStudentCanViewOwnReport();
     testStudentCannotViewAnotherReport();
     testSecureInputValidation();
+    testAttendanceDeletionPersistsAcrossRestart();
     return 0;
 }
