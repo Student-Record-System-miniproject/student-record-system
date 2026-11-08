@@ -1,5 +1,4 @@
 #include "srm/input_validator.h"
-
 #include <charconv>
 #include <cctype>
 
@@ -44,4 +43,24 @@ bool InputValidator::validateConfirmation(const std::string& input) {
            input == "N" || input == "n";
 }
 
+bool InputValidator::validatePassword(const std::string& password) {
+    if (password.length() < 8) {
+        return false;
+    }
+
+    bool hasLetter = false;
+    bool hasDigit = false;
+
+    for (unsigned char ch : password) {
+        if (std::isalpha(ch)) {
+            hasLetter = true;
+        }
+
+        if (std::isdigit(ch)) {
+            hasDigit = true;
+        }
+    }
+
+    return hasLetter && hasDigit;
+}
 }  // namespace srm

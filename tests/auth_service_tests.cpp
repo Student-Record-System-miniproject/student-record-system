@@ -340,6 +340,133 @@ void testSecureInputValidation() {
     std::filesystem::remove(path);
 }
 
+void testPasswordChangeForAllRoles() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-password-change.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+    const auto adminSetup =
+    service.setupInitialAdmin("admin", "OriginalAdmin123");
+
+    assert(adminSetup.success);
+
+// Register one user for each role.
+    assert(service.registerUser(
+        adminSession, "teacher_change", "Teacher123",
+        Role::Teacher).success);
+
+    assert(service.registerUser(
+        adminSession, "student_change", "Student123",
+        Role::Student, "S101").success);
+
+    // Administrator changes their own password.
+    const auto adminChange =
+        service.changePassword(adminSession, "AdminNew123");
+    assert(adminChange.success);
+
+    assert(service.login("admin", "AdminNew123").success);
+    assert(!service.login("admin", "anything_else").success);
+
+    // Teacher logs in and changes their own password.
+    const auto teacherLogin =
+        service.login("teacher_change", "Teacher123");
+    assert(teacherLogin.success);
+
+    const auto teacherChange =
+        service.changePassword(
+            teacherLogin.session, "TeacherNew123");
+    assert(teacherChange.success);
+
+    assert(service.login(
+        "teacher_change", "TeacherNew123").success);
+    assert(!service.login(
+        "teacher_change", "Teacher123").success);
+
+    // Student logs in and changes their own password.
+    const auto studentLogin =
+        service.login("student_change", "Student123");
+    assert(studentLogin.success);
+
+    const auto studentChange =
+        service.changePassword(
+            studentLogin.session, "StudentNew123");
+    assert(studentChange.success);
+
+    assert(service.login(
+        "student_change", "StudentNew123").success);
+    assert(!service.login(
+        "student_change", "Student123").success);
+
+    std::filesystem::remove(path);
+}
+
+void testPasswordChangeRejectsWeakPasswords() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-weak-password.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+
+    assert(service.registerUser(
+        adminSession, "weak_test", "Original123",
+        Role::Student, "S102").success);
+
+    const auto login = service.login("weak_test", "Original123");
+    assert(login.success);
+
+    // Each of these violates at least one SRS requirement.
+    const std::string weakPasswords[] = {
+        "abc123",       // Too short
+        "abcdefgh",    // No digit
+        "12345678",    // No letter
+        ""
+    };
+
+    for (const auto& password : weakPasswords) {
+        const auto result =
+            service.changePassword(login.session, password);
+
+        assert(!result.success);
+        assert(result.error == ErrorCode::InvalidInput);
+        assert(!result.message.empty());
+    }
+
+    // The original password must still work.
+    assert(service.login("weak_test", "Original123").success);
+
+    std::filesystem::remove(path);
+}
+
+void testPasswordChangeRequiresAuthentication() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-unauthenticated-change.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+
+    assert(service.registerUser(
+        adminSession, "auth_test", "Original123",
+        Role::Student, "S103").success);
+
+    Session unauthenticatedSession{
+        Role::Student, false, "S103", "auth_test"
+    };
+
+    const auto result =
+        service.changePassword(
+            unauthenticatedSession, "Changed123");
+
+    assert(!result.success);
+    assert(result.error == ErrorCode::AccessDenied);
+
+    // The original password must remain unchanged.
+    assert(service.login("auth_test", "Original123").success);
+
+    std::filesystem::remove(path);
+}
+
+
 }  // namespace
 
 int main() {
@@ -352,5 +479,8 @@ int main() {
     testCryptoPBKDF2Verification();
     testSessionTimeout();
     testSecureInputValidation();
+    testPasswordChangeForAllRoles();
+    testPasswordChangeRejectsWeakPasswords();
+    testPasswordChangeRequiresAuthentication();
     return 0;
 }

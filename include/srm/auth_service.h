@@ -75,7 +75,9 @@ public:
     // - Persists unlocked state
     OperationResult unlockAccount(const Session& adminSession,
                                   const std::string& username);
-
+    // SRM-F-004: Allows an authenticated user to change their own password.
+    OperationResult changePassword(const Session& session,
+                               const std::string& newPassword);
     bool isAccountLocked(const std::string& username) const;
     int getFailedAttempts(const std::string& username) const;
 
