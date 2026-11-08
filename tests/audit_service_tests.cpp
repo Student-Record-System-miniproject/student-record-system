@@ -246,7 +246,10 @@ void testAuditWriteFailureAndFailSecurePolicy() {
 
     StudentService studentService(studentPath);
     const Session adminSession{Role::Administrator, true, {}, "admin"};
-    const StudentRecord student{"S501", "Dave", "ECE", "dave@pes.edu"};
+    const StudentRecord student{
+        "S501", "Dave", "ECE", "dave@pes.edu",
+        "2005-04-12", 2, "9876543210"
+    };
 
     // With fail-secure policy (requireAudit = true): operation fails if audit fails
     studentService.setAuditService(&failingAudit, true);
@@ -311,7 +314,10 @@ void testServiceIntegrationWithAuditLogging() {
     students.setAuditService(&audit);
 
     // Add student
-    StudentRecord s1{"S201", "Charlie", "CS", "charlie@pes.edu"};
+    StudentRecord s1{
+        "S201", "Charlie", "CS", "charlie@pes.edu",
+        "2005-04-12", 2, "9876543210"
+    };
     assert(students.addStudent(adminSession, s1).success);
 
     // Update student
