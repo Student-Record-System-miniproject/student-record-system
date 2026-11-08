@@ -1,3 +1,4 @@
 build/
 test_data/
 winget_result.txt
+build-*/

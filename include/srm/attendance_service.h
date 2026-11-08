@@ -32,6 +32,11 @@ public:
 
     bool load();
     bool save() const;
+
+    void upsert(AttendanceRecord record);
+    std::vector<AttendanceRecord> snapshot() const;
+    void restore(std::vector<AttendanceRecord> records);
+
     bool removeByRollNumber(const std::string& rollNumber);
     const std::vector<AttendanceRecord>& records() const;
 
@@ -46,6 +51,13 @@ public:
 
     AttendanceService(std::filesystem::path attendanceFile,
                       ExistsCheck studentExists);
+    // SRM-F-030: Mark or update attendance for a student.
+    OperationResult markAttendance(
+        const Session& session,
+        const std::string& rollNumber,
+        const std::string& subject,
+        const std::string& date,
+        AttendanceStatus status);
 
     ReportResult generateReport(const Session& session,
                                 const std::string& rollNumber) const;

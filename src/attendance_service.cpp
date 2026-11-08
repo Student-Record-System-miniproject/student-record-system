@@ -10,6 +10,7 @@
 #include <map>
 #include <sstream>
 #include <utility>
+#include <ctime>
 
 namespace srm {
 namespace {
@@ -24,6 +25,69 @@ bool parseStatus(const std::string& value, AttendanceStatus& status) {
         return true;
     }
     return false;
+}
+
+bool isValidCalendarDate(const std::string& date) {
+    if (date.size() != 10 || date[4] != '-' || date[7] != '-') {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < date.size(); ++i) {
+        if (i == 4 || i == 7) {
+            continue;
+        }
+
+        if (date[i] < '0' || date[i] > '9') {
+            return false;
+        }
+    }
+
+    const int year =
+        (date[0] - '0') * 1000 +
+        (date[1] - '0') * 100 +
+        (date[2] - '0') * 10 +
+        (date[3] - '0');
+
+    const int month =
+        (date[5] - '0') * 10 + (date[6] - '0');
+
+    const int day =
+        (date[8] - '0') * 10 + (date[9] - '0');
+
+    if (year < 1 || month < 1 || month > 12) {
+        return false;
+    }
+
+    const bool leapYear =
+        (year % 400 == 0) ||
+        (year % 4 == 0 && year % 100 != 0);
+
+    const int daysInMonth[] = {
+        31, leapYear ? 29 : 28, 31, 30, 31, 30,
+        31, 31, 30, 31, 30, 31
+    };
+
+    return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+std::string currentLocalDate() {
+    const std::time_t now = std::time(nullptr);
+    std::tm localTime{};
+
+#if defined(_WIN32)
+    if (localtime_s(&localTime, &now) != 0) {
+        return {};
+    }
+#else
+    if (localtime_r(&now, &localTime) == nullptr) {
+        return {};
+    }
+#endif
+
+    std::ostringstream date;
+    date << std::put_time(&localTime, "%Y-%m-%d");
+
+    return date.str();
 }
 
 }  // namespace
@@ -71,6 +135,27 @@ bool AttendanceRepository::save() const {
     });
 }
 
+void AttendanceRepository::upsert(AttendanceRecord record) {
+    for (AttendanceRecord& existing : records_) {
+        if (existing.rollNumber == record.rollNumber &&
+            existing.subject == record.subject &&
+            existing.date == record.date) {
+            existing.status = record.status;
+            return;
+        }
+    }
+
+    records_.push_back(std::move(record));
+}
+
+std::vector<AttendanceRecord> AttendanceRepository::snapshot() const {
+    return records_;
+}
+
+void AttendanceRepository::restore(std::vector<AttendanceRecord> records) {
+    records_ = std::move(records);
+}
+
 bool AttendanceRepository::removeByRollNumber(const std::string& rollNumber) {
     const auto prevRecords = records_;
     const auto initialSize = records_.size();
@@ -96,6 +181,78 @@ AttendanceService::AttendanceService(std::filesystem::path attendanceFile,
     : repository_(std::move(attendanceFile)),
       studentExists_(std::move(studentExists)),
       storageReady_(repository_.load()) {}
+
+OperationResult AttendanceService::markAttendance(
+    const Session& session,
+    const std::string& rollNumber,
+    const std::string& subject,
+    const std::string& date,
+    AttendanceStatus status) {
+
+    // Only teachers are allowed to mark attendance.
+    const auto auth = AccessController::authorize(
+        session, Operation::MarkAttendance, rollNumber);
+
+    if (!auth.success) {
+        return auth;
+    }
+
+    if (!storageReady_) {
+        return {false, ErrorCode::StorageFailure,
+                "Attendance data could not be loaded."};
+    }
+
+    // Validate student roll number and subject.
+    if (!InputValidator::validateText(rollNumber) ||
+        !InputValidator::validateText(subject)) {
+        return {false, ErrorCode::InvalidInput,
+                "Student roll number and subject must be valid."};
+    }
+
+    // Check date format and calendar validity.
+    if (!isValidCalendarDate(date)) {
+        return {false, ErrorCode::InvalidInput,
+                "Invalid date. Use YYYY-MM-DD format."};
+    }
+
+    // Reject dates later than today.
+    const std::string today = currentLocalDate();
+
+    if (today.empty()) {
+        return {false, ErrorCode::InvalidInput,
+                "Could not determine the current date."};
+    }
+
+    if (date > today) {
+        return {false, ErrorCode::InvalidInput,
+                "Future attendance dates are not allowed."};
+    }
+
+    // Check whether the student exists.
+    if (!studentExists_ || !studentExists_(rollNumber)) {
+        return {false, ErrorCode::StudentNotFound,
+                "Student was not found."};
+    }
+
+    // Preserve existing records in case saving fails.
+    const auto previousRecords = repository_.snapshot();
+
+    repository_.upsert({rollNumber, subject, date, status});
+
+    if (!repository_.save()) {
+        repository_.restore(previousRecords);
+        storageReady_ = false;
+
+        return {false, ErrorCode::StorageFailure,
+                "Attendance could not be saved."};
+    }
+
+    const std::string statusText =
+        (status == AttendanceStatus::Present) ? "Present" : "Absent";
+
+    return {true, ErrorCode::None,
+            "Attendance marked " + statusText + " successfully."};
+}
 
 ReportResult AttendanceService::generateReport(
     const Session& session,
