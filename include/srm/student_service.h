@@ -75,6 +75,10 @@ public:
     std::vector<StudentRecord> searchStudents(const Session& session,
                                               const std::string& query) const;
 
+    // SRM-F-015: List all students in ascending roll-number order.
+    // Only Administrator and Teacher may access this list.
+    std::vector<StudentRecord> listStudents(const Session& session) const;
+
     bool exists(const std::string& rollNumber) const;
 
     void setAuditService(AuditService* auditService, bool requireAudit = false);

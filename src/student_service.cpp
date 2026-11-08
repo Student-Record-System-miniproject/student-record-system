@@ -296,6 +296,32 @@ std::vector<StudentRecord> StudentService::searchStudents(const Session& session
     return repository_.searchByName(query);
 }
 
+std::vector<StudentRecord> StudentService::listStudents(
+    const Session& session) const {
+
+    // Only authenticated Administrators and Teachers can list students.
+    if (!session.authenticated ||
+        (session.role != Role::Administrator &&
+         session.role != Role::Teacher)) {
+        return {};
+    }
+
+    if (!storageReady_) {
+        return {};
+    }
+
+    // Copy all student records.
+    std::vector<StudentRecord> students = repository_.records();
+
+    // Sort by ascending roll number.
+    std::sort(students.begin(), students.end(),
+              [](const StudentRecord& a, const StudentRecord& b) {
+                  return a.rollNumber < b.rollNumber;
+              });
+
+    return students;
+}
+
 bool StudentService::exists(const std::string& rollNumber) const {
     if (!InputValidator::validateText(rollNumber)) {
         return false;
