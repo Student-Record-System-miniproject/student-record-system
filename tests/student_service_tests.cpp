@@ -368,6 +368,41 @@ void testSearchAndListStudents() {
 
     std::filesystem::remove(path);
 }
+void testStudentPersistenceAcrossRestart() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-student-restart.tsv";
+
+    std::filesystem::remove(path);
+
+    // First application run: create and save a student.
+    {
+        StudentService service(path);
+
+        const auto result = service.addStudent(
+            adminSession,
+            {"S501", "Alice Johnson", "CSE", "alice@test.edu"}
+        );
+
+        assert(result.success);
+        assert(std::filesystem::exists(path));
+    }
+
+    // Second application run: create a new service using the same file.
+    {
+        StudentService restartedService(path);
+
+        const auto* student = restartedService.getStudent(
+            adminSession, "S501"
+        );
+
+        assert(student != nullptr);
+        assert(student->name == "Alice Johnson");
+        assert(student->department == "CSE");
+        assert(student->email == "alice@test.edu");
+    }
+
+    std::filesystem::remove(path);
+}
 
 }  // namespace
 
@@ -381,5 +416,6 @@ int main() {
     testCascadeFailureRollsBackStudentDeletion();
     testSecureInputValidation();
     testSearchAndListStudents();
+    testStudentPersistenceAcrossRestart();
     return 0;
 }

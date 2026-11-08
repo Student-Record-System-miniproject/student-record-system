@@ -339,6 +339,42 @@ void testSecureInputValidation() {
 
     std::filesystem::remove(path);
 }
+void testRegisteredUserPersistsAcrossRestart() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-user-restart.tsv";
+
+    std::filesystem::remove(path);
+
+    // First run: register a teacher account.
+    {
+        AuthService service(path, TEST_ITERATIONS);
+
+        const auto result = service.registerUser(
+            adminSession,
+            "persist_user",
+            "Persist123",
+            Role::Teacher
+        );
+
+        assert(result.success);
+        assert(std::filesystem::exists(path));
+    }
+
+    // Second run: verify the registered account can log in.
+    {
+        AuthService restartedService(path, TEST_ITERATIONS);
+
+        const auto login = restartedService.login(
+            "persist_user",
+            "Persist123"
+        );
+
+        assert(login.success);
+        assert(login.session.role == Role::Teacher);
+    }
+
+    std::filesystem::remove(path);
+}
 
 }  // namespace
 
@@ -352,5 +388,6 @@ int main() {
     testCryptoPBKDF2Verification();
     testSessionTimeout();
     testSecureInputValidation();
+    testRegisteredUserPersistsAcrossRestart();
     return 0;
 }
