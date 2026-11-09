@@ -1,3 +1,4 @@
+
 name: C++ Build and Test
 
 on:
@@ -12,6 +13,7 @@ jobs:
   build-and-test:
     name: Build and Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -29,3 +31,33 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Verify protected directories deny other Linux users
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          TEST_ROOT="/tmp/srm_cross_user_test"
+
+          ./build/directory_security_tests --prepare "$TEST_ROOT"
+
+          if sudo -u nobody -- cat "$TEST_ROOT/data/students.txt" >/dev/null 2>&1; then
+            echo "ERROR: Another OS user read protected student data"
+            exit 1
+          fi
+
+          if sudo -u nobody -- touch "$TEST_ROOT/data/unauthorized.txt" 2>/dev/null; then
+            echo "ERROR: Another OS user wrote to protected data directory"
+            exit 1
+          fi
+
+          if sudo -u nobody -- cat "$TEST_ROOT/backups/snapshot.txt" >/dev/null 2>&1; then
+            echo "ERROR: Another OS user read protected backup data"
+            exit 1
+          fi
+
+          if sudo -u nobody -- touch "$TEST_ROOT/backups/unauthorized.txt" 2>/dev/null; then
+            echo "ERROR: Another OS user wrote to protected backup directory"
+            exit 1
+          fi
+
+          echo "Cross-user access denial verified."

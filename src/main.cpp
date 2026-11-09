@@ -5,7 +5,7 @@
 #include "srm/input_validator.h"
 #include "srm/rbac.h"
 #include "srm/student_service.h"
-
+#include "srm/directory_security.h"
 #include <chrono>
 #include <iostream>
 #include <string>
@@ -137,6 +137,13 @@ void manageUsersMenu(srm::AuthService& authService,
 }
 
 int main() {
+    // SRM-SR-006: Protect data and backup directories before accessing files.
+    if (!srm::DirectorySecurity::protectApplicationDirectories(
+            "data", "backups")) {
+        std::cerr << "SECURITY ERROR: Unable to protect application data "
+                     "and backup directories.\n";
+        return 1;
+    }
     // Initialize central audit logging service (SRM-F-044, SRM-NF-008, SRM-SR-005)
     srm::AuditService auditService("data/audit.log");
 

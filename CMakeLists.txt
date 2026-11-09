@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(srm_core
     src/common_types.cpp
+    src/directory_security.cpp
     src/crypto.cpp
     src/audit_service.cpp
     src/storage_utils.cpp
@@ -81,6 +82,14 @@ add_executable(input_validator_tests
     tests/input_validator_tests.cpp
 )
 target_link_libraries(input_validator_tests PRIVATE srm_core)
+add_executable(directory_security_tests
+    tests/directory_security_tests.cpp
+)
+target_link_libraries(directory_security_tests PRIVATE srm_core)
+
+if (WIN32)
+    target_link_libraries(directory_security_tests PRIVATE advapi32)
+endif()
 
 enable_testing()
 
@@ -93,3 +102,4 @@ add_test(NAME auth_service_tests COMMAND auth_service_tests)
 add_test(NAME audit_service_tests COMMAND audit_service_tests)
 add_test(NAME crash_safe_saving_tests COMMAND crash_safe_saving_tests)
 add_test(NAME input_validator_tests COMMAND input_validator_tests)
+add_test(NAME directory_security_tests COMMAND directory_security_tests)
