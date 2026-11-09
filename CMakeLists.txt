@@ -82,6 +82,10 @@ add_executable(backup_service_tests
     tests/backup_service_tests.cpp
 )
 target_link_libraries(backup_service_tests PRIVATE srm_core)
+add_executable(input_validator_tests
+    tests/input_validator_tests.cpp
+)
+target_link_libraries(input_validator_tests PRIVATE srm_core)
 enable_testing()
 
 add_test(NAME grade_service_tests COMMAND grade_service_tests)
