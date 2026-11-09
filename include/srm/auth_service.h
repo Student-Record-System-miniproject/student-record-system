@@ -3,6 +3,7 @@
 #include "srm/common_types.h"
 #include "srm/crypto.h"
 #include "srm/rbac.h"
+#include "srm/user_repository.h"
 
 #include <filesystem>
 #include <string>
@@ -12,43 +13,17 @@ namespace srm {
 
 class AuditService;
 
-struct UserAccount {
-    std::string username;
-    std::string passwordHash;
-    Role role;
-    int failedAttempts = 0;
-    bool isLocked = false;
-    std::string studentRollNumber = "";
-    bool isActive = true;
-};
-
 struct LoginResult {
-    bool success;
-    ErrorCode error;
+    bool success = false;
+    ErrorCode error = ErrorCode::InvalidCredentials;
     std::string message;
     Session session;
-};
-
-class UserRepository {
-public:
-    explicit UserRepository(std::filesystem::path filePath);
-
-    bool load();
-    bool save() const;
-    bool addUser(UserAccount user);
-    UserAccount* findUser(const std::string& username);
-    const UserAccount* findUser(const std::string& username) const;
-    const std::vector<UserAccount>& users() const;
-
-private:
-    std::filesystem::path filePath_;
-    std::vector<UserAccount> users_;
 };
 
 class AuthService {
 public:
     explicit AuthService(std::filesystem::path userFile,
-                         unsigned int hashIterations = 10000);
+                         unsigned int hashIterations = 600000);
 
     // Initial setup mechanism: creates the first Administrator account.
     // Allowed only when no user accounts exist in the repository.

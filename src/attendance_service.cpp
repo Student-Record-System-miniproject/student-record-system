@@ -1,95 +1,69 @@
 #include "srm/attendance_service.h"
 #include "srm/report_export.h"
 #include "srm/rbac.h"
-#include "srm/storage_utils.h"
 #include "srm/input_validator.h"
 
-#include <algorithm>
-#include <fstream>
 #include <iomanip>
 #include <map>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 namespace srm {
 namespace {
 
-bool parseStatus(const std::string& value, AttendanceStatus& status) {
-    if (value == "P") {
-        status = AttendanceStatus::Present;
-        return true;
+std::map<std::string, AttendanceSummary> summarizeAttendance(
+    const std::vector<AttendanceRecord>& records,
+    const std::string& rollNumber) {
+
+    std::map<std::string, AttendanceSummary> summaries;
+
+    for (const AttendanceRecord& record : records) {
+        if (record.rollNumber != rollNumber) {
+            continue;
+        }
+
+        auto& summary = summaries[record.subject];
+        summary.subject = record.subject;
+        ++summary.daysHeld;
+
+        if (record.status == AttendanceStatus::Present) {
+            ++summary.daysPresent;
+        }
     }
-    if (value == "A") {
-        status = AttendanceStatus::Absent;
-        return true;
+
+    return summaries;
+}
+
+std::string formatAttendanceReport(
+    const std::string& rollNumber,
+    std::map<std::string, AttendanceSummary>& summaries) {
+
+    std::ostringstream report;
+    report << "Attendance report for " << rollNumber << '\n';
+    report << std::fixed << std::setprecision(1);
+
+    for (auto& [subject, summary] : summaries) {
+        summary.percentage = summary.daysHeld == 0
+                                 ? 0.0
+                                 : (100.0 * summary.daysPresent) / summary.daysHeld;
+
+        summary.belowThreshold = summary.percentage < 75.0;
+
+        report << subject << " | Present " << summary.daysPresent << "/"
+               << summary.daysHeld << " | " << summary.percentage << "%";
+
+        if (summary.belowThreshold) {
+            report << " | BELOW 75%";
+        }
+
+        report << '\n';
     }
-    return false;
+
+    return report.str();
 }
 
 }  // namespace
-
-AttendanceRepository::AttendanceRepository(std::filesystem::path filePath)
-    : filePath_(std::move(filePath)) {}
-
-bool AttendanceRepository::load() {
-    recoverInterruptedSave(filePath_);
-    records_.clear();
-    std::ifstream input(filePath_);
-    if (!input) {
-        return !std::filesystem::exists(filePath_);
-    }
-
-    std::string line;
-    while (std::getline(input, line)) {
-        std::istringstream row(line);
-        AttendanceRecord record;
-        std::string status;
-        if (!std::getline(row, record.rollNumber, '\t') ||
-            !std::getline(row, record.subject, '\t') ||
-            !std::getline(row, record.date, '\t') ||
-            !std::getline(row, status) ||
-            !InputValidator::validateText(record.rollNumber) ||
-            !InputValidator::validateText(record.subject) ||
-            !InputValidator::validateText(record.date) ||
-            !parseStatus(status, record.status)) {
-            records_.clear();
-            return false;
-        }
-        records_.push_back(std::move(record));
-    }
-    return true;
-}
-
-bool AttendanceRepository::save() const {
-    return atomicWriteFile(filePath_, [&](std::ostream& output) {
-        for (const AttendanceRecord& record : records_) {
-            output << record.rollNumber << '\t' << record.subject << '\t'
-                   << record.date << '\t'
-                   << (record.status == AttendanceStatus::Present ? "P" : "A") << '\n';
-        }
-        return output.good();
-    });
-}
-
-bool AttendanceRepository::removeByRollNumber(const std::string& rollNumber) {
-    const auto prevRecords = records_;
-    const auto initialSize = records_.size();
-    records_.erase(
-        std::remove_if(records_.begin(), records_.end(),
-                       [&](const AttendanceRecord& r) { return r.rollNumber == rollNumber; }),
-        records_.end());
-    if (records_.size() != initialSize) {
-        if (!save()) {
-            records_ = prevRecords;
-            return false;
-        }
-    }
-    return true;
-}
-
-const std::vector<AttendanceRecord>& AttendanceRepository::records() const {
-    return records_;
-}
 
 AttendanceService::AttendanceService(std::filesystem::path attendanceFile,
                                      ExistsCheck studentExists)
@@ -100,13 +74,17 @@ AttendanceService::AttendanceService(std::filesystem::path attendanceFile,
 ReportResult AttendanceService::generateReport(
     const Session& session,
     const std::string& rollNumber) const {
+
     const auto op = (session.role == Role::Student)
                         ? Operation::ViewOwnAttendanceReport
                         : Operation::ViewAnyStudentAttendanceReport;
+
     const auto auth = AccessController::authorize(session, op, rollNumber);
+
     if (!auth.success) {
         return {false, auth.error, auth.message, {}};
     }
+
     if (!InputValidator::validateText(rollNumber)) {
         return {false, ErrorCode::InvalidInput,
                 "Invalid student roll number.", {}};
@@ -116,39 +94,16 @@ ReportResult AttendanceService::generateReport(
         return {false, ErrorCode::StorageFailure,
                 "Attendance data could not be loaded.", {}};
     }
+
     if (!studentExists_ || !studentExists_(rollNumber)) {
-        return {false, ErrorCode::StudentNotFound, "Student was not found.", {}};
+        return {false, ErrorCode::StudentNotFound,
+                "Student was not found.", {}};
     }
 
-    std::map<std::string, AttendanceSummary> summaries;
-    for (const AttendanceRecord& record : repository_.records()) {
-        if (record.rollNumber != rollNumber) {
-            continue;
-        }
-        auto& summary = summaries[record.subject];
-        summary.subject = record.subject;
-        ++summary.daysHeld;
-        if (record.status == AttendanceStatus::Present) {
-            ++summary.daysPresent;
-        }
-    }
+    auto summaries = summarizeAttendance(repository_.records(), rollNumber);
+    const std::string report = formatAttendanceReport(rollNumber, summaries);
 
-    std::ostringstream report;
-    report << "Attendance report for " << rollNumber << '\n';
-    report << std::fixed << std::setprecision(1);
-    for (auto& [subject, summary] : summaries) {
-        summary.percentage = summary.daysHeld == 0
-                                 ? 0.0
-                                 : (100.0 * summary.daysPresent) / summary.daysHeld;
-        summary.belowThreshold = summary.percentage < 75.0;
-        report << subject << " | Present " << summary.daysPresent << "/"
-               << summary.daysHeld << " | " << summary.percentage << "%";
-        if (summary.belowThreshold) {
-            report << " | BELOW 75%";
-        }
-        report << '\n';
-    }
-    return {true, ErrorCode::None, "Attendance report generated.", report.str()};
+    return {true, ErrorCode::None, "Attendance report generated.", report};
 }
 
 OperationResult AttendanceService::exportReport(

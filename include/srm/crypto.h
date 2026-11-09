@@ -14,7 +14,7 @@ public:
     // Stored format: pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>
     static std::string hashPassword(const std::string& password,
                                     const std::string& saltHex = "",
-                                    unsigned int iterations = 100000);
+                                    unsigned int iterations = 600000);
 
     // Verify candidate password against stored hash format.
     // Constant-time comparison is used to prevent timing side-channels.

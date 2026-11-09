@@ -1,7 +1,12 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "srm/grade_service.h"
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -71,6 +76,44 @@ void testUpdateReplacesAndPersists() {
         assert(report.report.find("Marks 88") != std::string::npos);
         assert(report.report.find("Marks 72") == std::string::npos);
     }
+    std::filesystem::remove(path);
+}
+
+void testGradeRepositoryLoadHandlesDuplicates() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-grade-load-duplicates.tsv";
+
+    std::filesystem::remove(path);
+
+    // Create a file containing a duplicate grade record.
+    {
+        std::ofstream file(path);
+        assert(file.is_open());
+
+        file << "S001\tMathematics\t1\t72\n";
+        file << "S001\tMathematics\t1\t88\n";
+        file << "S002\tPhysics\t1\t91\n";
+    }
+
+    srm::GradeRepository repository(path);
+
+    assert(repository.load());
+
+    const auto& records = repository.records();
+
+    // Duplicate records must not create additional entries.
+    assert(records.size() == 2);
+
+    // The latest marks must replace the earlier marks.
+    assert(records[0].rollNumber == "S001");
+    assert(records[0].subject == "Mathematics");
+    assert(records[0].marks == 88);
+
+    // The independent record must remain unchanged.
+    assert(records[1].rollNumber == "S002");
+    assert(records[1].subject == "Physics");
+    assert(records[1].marks == 91);
+
     std::filesystem::remove(path);
 }
 
@@ -230,6 +273,7 @@ int main() {
     testBoundaryMarksAreAccepted();
     testInvalidMarksAreRejected();
     testUpdateReplacesAndPersists();
+    testGradeRepositoryLoadHandlesDuplicates();
     testPermissionsAndIdentifiersAreValidated();
     testSecureInputValidation();
     testGradeBoundaries();

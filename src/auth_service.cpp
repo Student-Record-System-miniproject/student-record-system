@@ -10,100 +10,150 @@
 
 namespace srm {
 
-UserRepository::UserRepository(std::filesystem::path filePath)
-    : filePath_(std::move(filePath)) {}
+namespace {
 
-bool UserRepository::load() {
-    recoverInterruptedSave(filePath_);
-    users_.clear();
-    std::ifstream input(filePath_);
-    if (!input) {
-        return !std::filesystem::exists(filePath_);
+LoginResult rejectUnknownUser(
+    const std::string& username,
+    AuditService* auditService) {
+
+    if (auditService) {
+        auditService->logLogin(
+            username, Role::Student, false, "Invalid username");
     }
 
-    std::string line;
-    while (std::getline(input, line)) {
-        std::istringstream row(line);
-        UserAccount user;
-        std::string roleStr;
-        std::string failedAttemptsStr;
-        std::string isLockedStr;
-        if (!std::getline(row, user.username, '\t') ||
-            !std::getline(row, user.passwordHash, '\t') ||
-            !std::getline(row, roleStr, '\t') ||
-            !std::getline(row, failedAttemptsStr, '\t') ||
-            !std::getline(row, isLockedStr, '\t') ||
-            !stringToRole(roleStr, user.role) ||
-            !InputValidator::parseInteger(failedAttemptsStr, user.failedAttempts)) {
-            users_.clear();
-            return false;
-        }
-        user.isLocked = (isLockedStr == "1");
-        std::string activeText;
+    return {false, ErrorCode::InvalidCredentials,
+            "Invalid username or password.", {}};
+}
 
-        if (std::getline(row, user.studentRollNumber, '\t') &&
-            std::getline(row, activeText)) {
-            if (activeText != "0" && activeText != "1") {
-                users_.clear();
-                return false;
-            }
+LoginResult rejectInactiveAccount(
+    const UserAccount& user,
+    AuditService* auditService) {
 
-            user.isActive = (activeText == "1");
-        } else {
-            // Existing account records without this field remain active.
-            user.isActive = true;
-        }
-        users_.push_back(std::move(user));
+    if (auditService) {
+        auditService->logLogin(
+            user.username, user.role, false,
+            "Login rejected: Account is deactivated");
     }
+
+    return {false, ErrorCode::AccessDenied,
+            "Account is deactivated. Contact an Administrator.", {}};
+}
+
+LoginResult rejectLockedAccount(
+    const UserAccount& user,
+    AuditService* auditService) {
+
+    if (auditService) {
+        auditService->logLogin(
+            user.username, user.role, false,
+            "Login rejected: Account is locked");
+    }
+
+    return {false, ErrorCode::AccountLocked,
+            "Account is locked due to repeated failed login attempts. Contact an Administrator to unlock.",
+            {}};
+}
+
+LoginResult handleAccountLockout(
+    AuditService* auditService,
+    const UserAccount& user,
+    const std::string& username) {
+
+    if (auditService) {
+        auditService->logLogin(
+            username, user.role, false,
+            "Account locked after 3 consecutive failed login attempts");
+
+        auditService->logOperation(
+            Session{user.role, false, user.studentRollNumber, username,
+                    std::chrono::steady_clock::time_point{}},
+            "ACCOUNT_LOCKED", username, true,
+            "Account locked due to 3 failed attempts");
+    }
+
+    return {false, ErrorCode::AccountLocked,
+            "Account locked after 3 consecutive failed login attempts.", {}};
+}
+
+LoginResult handleFailedPassword(
+    const UserRepository& repository,
+    AuditService* auditService,
+    UserAccount& user,
+    const std::string& username) {
+
+    const int previousFailed = user.failedAttempts;
+    const bool previouslyLocked = user.isLocked;
+
+    user.failedAttempts++;
+
+    if (user.failedAttempts >= 3) {
+        user.isLocked = true;
+    }
+
+    if (!repository.save()) {
+        user.failedAttempts = previousFailed;
+        user.isLocked = previouslyLocked;
+
+        return {false, ErrorCode::StorageFailure,
+                "Failed to persist login attempt state.", {}};
+    }
+
+    if (user.isLocked) {
+        return handleAccountLockout(auditService, user, username);
+    }
+
+    if (auditService) {
+        auditService->logLogin(
+            username, user.role, false,
+            "Failed password attempt " +
+                std::to_string(user.failedAttempts));
+    }
+
+    return {false, ErrorCode::InvalidCredentials,
+            "Invalid username or password.", {}};
+}
+
+bool resetFailedAttempts(
+    const UserRepository& repository,
+    UserAccount& user) {
+
+    if (user.failedAttempts <= 0) {
+        return true;
+    }
+
+    const int previousFailed = user.failedAttempts;
+    user.failedAttempts = 0;
+
+    if (!repository.save()) {
+        user.failedAttempts = previousFailed;
+        return false;
+    }
+
     return true;
 }
 
-bool UserRepository::save() const {
-    return atomicWriteFile(filePath_, [&](std::ostream& output) {
-        for (const UserAccount& user : users_) {
-            output << user.username << '\t' << user.passwordHash << '\t'
-                   << roleToString(user.role) << '\t' << user.failedAttempts << '\t'
-                   << (user.isLocked ? "1" : "0") << '\t'
-                   << user.studentRollNumber << '\t'
-                   << (user.isActive ? "1" : "0") << '\n';
-        }
-        return output.good();
-    });
+LoginResult createSuccessfulLogin(
+    const UserAccount& user,
+    AuditService* auditService) {
+
+    if (auditService) {
+        auditService->logLogin(
+            user.username, user.role, true,
+            "Successful authentication");
+    }
+
+    Session session{
+        user.role,
+        true,
+        user.studentRollNumber,
+        user.username,
+        std::chrono::steady_clock::now()
+    };
+
+    return {true, ErrorCode::None, "Login successful.", session};
 }
 
-bool UserRepository::addUser(UserAccount user) {
-    if (findUser(user.username) != nullptr) {
-        return false;
-    }
-    users_.push_back(std::move(user));
-    if (!save()) {
-        users_.pop_back();
-        return false;
-    }
-    return true;
-}
-
-UserAccount* UserRepository::findUser(const std::string& username) {
-    for (UserAccount& user : users_) {
-        if (user.username == username) {
-            return &user;
-        }
-    }
-    return nullptr;
-}
-
-const UserAccount* UserRepository::findUser(const std::string& username) const {
-    for (const UserAccount& user : users_) {
-        if (user.username == username) {
-            return &user;
-        }
-    }
-    return nullptr;
-}
-
-const std::vector<UserAccount>& UserRepository::users() const {
-    return users_;
-}
+}  // namespace
 
 AuthService::AuthService(std::filesystem::path userFile, unsigned int hashIterations)
     : repository_(std::move(userFile)),
@@ -169,13 +219,15 @@ OperationResult AuthService::registerUser(const Session& adminSession,
     return {true, ErrorCode::None, "User registered successfully."};
 }
 
-LoginResult AuthService::login(const std::string& username,
-                               const std::string& password) {
+LoginResult AuthService::login(
+    const std::string& username,
+    const std::string& password) {
+
     if (!storageReady_) {
-        return {false, ErrorCode::StorageFailure, "User storage is not ready.", {}};
+        return {false, ErrorCode::StorageFailure,
+                "User storage is not ready.", {}};
     }
 
-    // Validate login inputs before searching for the user.
     if (!InputValidator::validateText(username) ||
         !InputValidator::validateText(password)) {
         return {false, ErrorCode::InvalidInput,
@@ -183,85 +235,30 @@ LoginResult AuthService::login(const std::string& username,
     }
 
     UserAccount* user = repository_.findUser(username);
+
     if (user == nullptr) {
-        if (auditService_) {
-            auditService_->logLogin(username, Role::Student, false, "Invalid username");
-        }
-        return {false, ErrorCode::InvalidCredentials, "Invalid username or password.", {}};
+        return rejectUnknownUser(username, auditService_);
     }
 
     if (!user->isActive) {
-        if (auditService_) {
-            auditService_->logLogin(username, user->role, false,
-                                    "Login rejected: Account is deactivated");
-        }
-
-        return {false, ErrorCode::AccessDenied,
-                "Account is deactivated. Contact an Administrator.", {}};
+        return rejectInactiveAccount(*user, auditService_);
     }
 
-    // SRM-F-002: If account is locked, 4th attempt is refused even if password is correct
     if (user->isLocked) {
-        if (auditService_) {
-            auditService_->logLogin(username, user->role, false, "Login rejected: Account is locked");
-        }
-        return {false, ErrorCode::AccountLocked,
-                "Account is locked due to repeated failed login attempts. Contact an Administrator to unlock.", {}};
+        return rejectLockedAccount(*user, auditService_);
     }
 
     if (!Crypto::verifyPassword(password, user->passwordHash)) {
-        int prevFailed = user->failedAttempts;
-        bool prevLocked = user->isLocked;
-
-        user->failedAttempts++;
-        if (user->failedAttempts >= 3) {
-            user->isLocked = true;
-        }
-
-        if (!repository_.save()) {
-            // Roll back in-memory modification on storage failure
-            user->failedAttempts = prevFailed;
-            user->isLocked = prevLocked;
-            return {false, ErrorCode::StorageFailure, "Failed to persist login attempt state.", {}};
-        }
-
-        if (user->isLocked) {
-            if (auditService_) {
-                auditService_->logLogin(username, user->role, false,
-                                        "Account locked after 3 consecutive failed login attempts");
-                auditService_->logOperation(
-                    Session{user->role, false, user->studentRollNumber, username,
-                            std::chrono::steady_clock::time_point{}},
-                                            "ACCOUNT_LOCKED", username, true,
-                                            "Account locked due to 3 failed attempts");
-            }
-            return {false, ErrorCode::AccountLocked,
-                    "Account locked after 3 consecutive failed login attempts.", {}};
-        }
-        if (auditService_) {
-            auditService_->logLogin(username, user->role, false,
-                                    "Failed password attempt " + std::to_string(user->failedAttempts));
-        }
-        return {false, ErrorCode::InvalidCredentials, "Invalid username or password.", {}};
+        return handleFailedPassword(
+            repository_, auditService_, *user, username);
     }
 
-    // Password correct: reset failed attempts if needed
-    if (user->failedAttempts > 0) {
-        int prevFailed = user->failedAttempts;
-        user->failedAttempts = 0;
-        if (!repository_.save()) {
-            user->failedAttempts = prevFailed;
-            return {false, ErrorCode::StorageFailure, "Failed to persist login session state.", {}};
-        }
+    if (!resetFailedAttempts(repository_, *user)) {
+        return {false, ErrorCode::StorageFailure,
+                "Failed to persist login session state.", {}};
     }
 
-    if (auditService_) {
-        auditService_->logLogin(username, user->role, true, "Successful authentication");
-    }
-
-    Session session{user->role, true, user->studentRollNumber, user->username,
-                std::chrono::steady_clock::now()};
-    return {true, ErrorCode::None, "Login successful.", session};
+    return createSuccessfulLogin(*user, auditService_);
 }
 
 OperationResult AuthService::unlockAccount(const Session& adminSession,
@@ -400,8 +397,8 @@ int AuthService::getFailedAttempts(const std::string& username) const {
     return user ? user->failedAttempts : 0;
 }
 
-void AuthService::setAuditService(AuditService* auditService, bool requireAudit) {
-    auditService_ = auditService;
+void AuthService::setAuditService(AuditService* service, bool requireAudit) {
+    auditService_ = service;
     requireAudit_ = requireAudit;
 }
 
