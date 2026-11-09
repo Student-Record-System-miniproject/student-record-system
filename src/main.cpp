@@ -7,19 +7,23 @@
 #include "srm/student_service.h"
 
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 void displayMenu(const srm::Session& session) {
-    std::cout << "\nLogin successful.\n";
+    std::cout << "\n================================\n";
+    std::cout << "       STUDENT RECORD SYSTEM\n";
+    std::cout << "================================\n";
     std::cout << "Logged in as: " << session.username << "\n";
     std::cout << "Role: " << srm::roleToString(session.role) << "\n";
 
     if (session.role == srm::Role::Administrator) {
         std::cout << "\nAdministrator Menu\n";
-        std::cout << "1. Manage users\n";
-        std::cout << "2. Manage students\n";
-        std::cout << "3. View reports\n";
+        std::cout << "1. View student records\n";
+        std::cout << "2. View student count\n";
+        std::cout << "3. Logout\n";
     }
     else if (session.role == srm::Role::Teacher) {
         std::cout << "\nTeacher Menu\n";
@@ -30,10 +34,32 @@ void displayMenu(const srm::Session& session) {
     }
     else if (session.role == srm::Role::Student) {
         std::cout << "\nStudent Menu\n";
-        std::cout << "1. View profile\n";
-        std::cout << "2. View marks\n";
-        std::cout << "3. View report card\n";
+        std::cout << "1. View my profile\n";
+        std::cout << "2. Logout\n";
     }
+
+    std::cout << "0. Exit application\n";
+}
+
+void displayStudents(const std::vector<srm::StudentRecord>& students) {
+    if (students.empty()) {
+        std::cout << "\nNo student records found.\n";
+        std::cout << "Next step: Contact an Administrator if you expected records.\n";
+        return;
+    }
+
+    std::cout << "\nRegistered Student Records\n";
+    std::cout << "---------------------------------------------\n";
+
+    for (const auto& student : students) {
+        std::cout << "Roll Number : " << student.rollNumber << "\n";
+        std::cout << "Name        : " << student.name << "\n";
+        std::cout << "Department  : " << student.department << "\n";
+        std::cout << "Email       : " << student.email << "\n";
+        std::cout << "---------------------------------------------\n";
+    }
+
+    std::cout << "Total records: " << students.size() << "\n";
 }
 
 void manageUsersMenu(srm::AuthService& authService,
@@ -137,15 +163,19 @@ void manageUsersMenu(srm::AuthService& authService,
 }
 
 int main() {
-    // Initialize central audit logging service (SRM-F-044, SRM-NF-008, SRM-SR-005)
+    // Initialize audit logging.
     srm::AuditService auditService("data/audit.log");
 
-    // Route RBAC access violations and security events to the audit service
-    srm::AccessController::setEventLogger([&auditService](const srm::SecurityEvent& ev) {
-        auditService.logSecurityViolation(ev, ev.username.empty() ? "anonymous" : ev.username);
-    });
+    srm::AccessController::setEventLogger(
+        [&auditService](const srm::SecurityEvent& ev) {
+            auditService.logSecurityViolation(
+                ev,
+                ev.username.empty() ? "anonymous" : ev.username
+            );
+        }
+    );
 
-    // Wire audit logging to authentication service
+    // Initialize authentication and student services.
     srm::AuthService authService("data/users.txt");
     authService.setAuditService(&auditService);
 
@@ -192,14 +222,22 @@ int main() {
         std::string username;
         std::string password;
 
-        std::cout << "\nStudent Record System\n";
-        std::cout << "Username: ";
+        std::cout << "\n================================\n";
+        std::cout << "      STUDENT RECORD SYSTEM\n";
+        std::cout << "================================\n";
+
+        std::cout << "Enter username (or type EXIT to quit): ";
 
         if (!std::getline(std::cin, username)) {
             return 0;
         }
 
-        std::cout << "Password: ";
+        if (username == "EXIT" || username == "exit") {
+            std::cout << "Exiting application. Goodbye!\n";
+            return 0;
+        }
+
+        std::cout << "Enter password: ";
 
         if (!std::getline(std::cin, password)) {
             return 0;
@@ -208,18 +246,36 @@ int main() {
         srm::LoginResult result = authService.login(username, password);
 
         if (!result.success) {
-            std::cout << "\n" << result.message << "\n";
-            std::cout << "Login failed.\n";
-            return 1;
+            std::cout << "\nLogin failed: " << result.message << "\n";
+
+            if (result.error == srm::ErrorCode::AccountLocked) {
+                std::cout << "Next step: Contact an Administrator to unlock your account.\n";
+                return 1;
+            }
+
+            if (result.error == srm::ErrorCode::StorageFailure) {
+                std::cout << "Next step: Check the user data file and storage permissions.\n";
+                return 1;
+            }
+
+            std::cout << "Next step: Verify your username and password, then try again.\n";
+            continue;
         }
 
         srm::Session session = result.session;
-        displayMenu(session);
 
-        while (session.authenticated) {
+        std::cout << "\nLogin successful!\n";
+
+        bool loggedIn = true;
+
+        // Role-based menu loop.
+        while (loggedIn && session.authenticated) {
+            displayMenu(session);
+
             std::cout << "\nEnter your choice: ";
 
             std::string choice;
+
             if (!std::getline(std::cin, choice)) {
                 return 0;
             }
@@ -235,17 +291,39 @@ int main() {
                 continue;
             }
 
+            // Check session timeout.
             if (srm::isSessionExpired(session)) {
                 session.authenticated = false;
-                auditService.logOperation(session, "SESSION_EXPIRED", session.username, true,
-                                          "Session timed out due to 5 minutes inactivity");
-                std::cout << "\nSession expired due to 5 minutes of inactivity.\n";
-                std::cout << "Please log in again.\n";
+
+                auditService.logOperation(
+                    session,
+                    "SESSION_EXPIRED",
+                    session.username,
+                    true,
+                    "Session timed out due to 5 minutes inactivity"
+                );
+
+                std::cout << "\nYour session expired after 5 minutes of inactivity.\n";
+                std::cout << "Next step: Log in again to continue.\n";
                 break;
             }
 
-            std::cout << "Action " << choiceNumber << " selected.\n";
-            auditService.logOperation(session, "MENU_ACTION", "Option_" + std::to_string(choiceNumber), true);
+            // Administrator actions.
+            if (session.role == srm::Role::Administrator) {
+                if (choiceNumber == 1) {
+                    displayStudents(studentService.listStudents(session));
+                }
+                else if (choiceNumber == 2) {
+                    const auto students = studentService.listStudents(session);
+
+                    std::cout << "\nRegistered student count: "
+                              << students.size() << "\n";
+                }
+                else if (choiceNumber == 3) {
+                    std::cout << "\nLogging out successfully.\n";
+                    loggedIn = false;
+                }
+            }
 
             // Execute user management action when selected
             if (choiceNumber == 1 && session.role == srm::Role::Administrator) {
