@@ -4,6 +4,7 @@
 #include "srm/input_validator.h"
 #include "srm/rbac.h"
 #include "srm/student_service.h"
+#include "srm/attendance_service.h"
 
 #include <chrono>
 #include <iostream>
@@ -31,6 +32,7 @@ void displayMenu(const srm::Session& session) {
         std::cout << "1. Manage student records\n";
         std::cout << "2. Enter marks\n";
         std::cout << "3. View reports\n";
+        std::cout << "4. Mark attendance\n";
     }
     else if (session.role == srm::Role::Student) {
         std::cout << "\nStudent Menu\n";
@@ -287,6 +289,49 @@ void manageUsersMenu(
     }
 }
 
+bool markStudentAttendance(
+    srm::AttendanceService& attendanceService,
+    const srm::Session& session) {
+
+    std::string rollNumber;
+    std::string subject;
+    std::string date;
+    std::string statusInput;
+
+    std::cout << "\nMark Student Attendance\n";
+
+    std::cout << "Student Roll Number: ";
+    if (!std::getline(std::cin, rollNumber)) return false;
+
+    std::cout << "Subject: ";
+    if (!std::getline(std::cin, subject)) return false;
+
+    std::cout << "Date (YYYY-MM-DD): ";
+    if (!std::getline(std::cin, date)) return false;
+
+    std::cout << "Attendance (P for Present / A for Absent): ";
+    if (!std::getline(std::cin, statusInput)) return false;
+
+    srm::AttendanceStatus status;
+
+    if (statusInput == "P" || statusInput == "p") {
+        status = srm::AttendanceStatus::Present;
+    }
+    else if (statusInput == "A" || statusInput == "a") {
+        status = srm::AttendanceStatus::Absent;
+    }
+    else {
+        std::cout << "Invalid attendance status. Enter P or A.\n";
+        return true;
+    }
+
+    const auto result = attendanceService.markAttendance(
+        session, rollNumber, subject, date, status);
+
+    std::cout << result.message << "\n";
+    return true;
+}
+
 bool createInitialAdminIfNeeded(srm::AuthService& authService,
                                 int& exitCode) {
     if (authService.hasUsers()) {
@@ -357,11 +402,14 @@ bool promptLogin(srm::AuthService& authService,
     return true;
 }
 
-bool processMenuAction(int choiceNumber,
-                       srm::AuthService& authService,
-                       const srm::StudentService& studentService,
-                       srm::AuditService& auditService,
-                       srm::Session& session) {
+bool processMenuAction(
+    int choiceNumber,
+    srm::AuthService& authService,
+    const srm::StudentService& studentService,
+    srm::AttendanceService& attendanceService,
+    srm::AuditService& auditService,
+    srm::Session& session) {
+
     if (srm::isSessionExpired(session)) {
         session.authenticated = false;
 
@@ -369,7 +417,7 @@ bool processMenuAction(int choiceNumber,
             session, "SESSION_EXPIRED", session.username, true,
             "Session timed out due to 5 minutes inactivity");
 
-        std::cout << "\nSession expired due to 5 minutes of inactivity.\n";
+        std::cout << "\nSession expired due to 5 minutes inactivity.\n";
         std::cout << "Please log in again.\n";
         return false;
     }
@@ -387,19 +435,27 @@ bool processMenuAction(int choiceNumber,
     else if (choiceNumber == 2 &&
              session.role == srm::Role::Administrator) {
         const auto students = studentService.searchStudents(session, "");
-
         std::cout << "Current registered student count: "
                   << students.size() << "\n";
+    }
+    else if (choiceNumber == 4 &&
+             session.role == srm::Role::Teacher) {
+        if (!markStudentAttendance(attendanceService, session)) {
+            return false;
+        }
     }
 
     session.lastActivity = std::chrono::steady_clock::now();
     return true;
 }
 
-bool runAuthenticatedSession(srm::AuthService& authService,
-                             const srm::StudentService& studentService,
-                             srm::AuditService& auditService,
-                             srm::Session& session) {
+bool runAuthenticatedSession(
+    srm::AuthService& authService,
+    const srm::StudentService& studentService,
+    srm::AttendanceService& attendanceService,
+    srm::AuditService& auditService,
+    srm::Session& session) {
+
     while (session.authenticated) {
         std::cout << "\nEnter your choice: ";
 
@@ -409,15 +465,20 @@ bool runAuthenticatedSession(srm::AuthService& authService,
         }
 
         int choiceNumber = 0;
+        const int maxChoice =
+            (session.role == srm::Role::Teacher) ? 4 : 3;
 
         if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
-            !srm::InputValidator::validateRange(choiceNumber, 1, 3)) {
-            std::cout << "Invalid choice. Please enter a number between 1 and 3.\n";
+            !srm::InputValidator::validateRange(
+                choiceNumber, 1, maxChoice)) {
+            std::cout << "Invalid choice. Please enter a number between 1 and "
+                      << maxChoice << ".\n";
             continue;
         }
 
-        if (!processMenuAction(choiceNumber, authService,
-                               studentService, auditService, session)) {
+        if (!processMenuAction(
+                choiceNumber, authService, studentService,
+                attendanceService, auditService, session)) {
             break;
         }
     }
@@ -446,6 +507,12 @@ int main() {
     srm::StudentService studentService("data/students.txt");
     studentService.setAuditService(&auditService);
 
+    srm::AttendanceService attendanceService(
+        "data/attendance.txt",
+        [&studentService](const std::string& rollNumber) {
+            return studentService.exists(rollNumber);
+        });
+
     while (true) {
         srm::Session session;
         int loginExitCode = 0;
@@ -457,7 +524,8 @@ int main() {
         displayMenu(session);
 
         if (!runAuthenticatedSession(
-                authService, studentService, auditService, session)) {
+                authService, studentService, attendanceService,
+                auditService, session)) {
             return 0;
         }
     }

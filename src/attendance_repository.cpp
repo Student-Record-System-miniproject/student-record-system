@@ -73,6 +73,28 @@ bool AttendanceRepository::save() const {
     });
 }
 
+void AttendanceRepository::upsert(AttendanceRecord record) {
+    for (AttendanceRecord& existing : records_) {
+        if (existing.rollNumber == record.rollNumber &&
+            existing.subject == record.subject &&
+            existing.date == record.date) {
+            existing.status = record.status;
+            return;
+        }
+    }
+
+    records_.push_back(std::move(record));
+}
+
+std::vector<AttendanceRecord> AttendanceRepository::snapshot() const {
+    return records_;
+}
+
+void AttendanceRepository::restore(
+    std::vector<AttendanceRecord> snapshotRecords) {
+    records_ = std::move(snapshotRecords);
+}
+
 bool AttendanceRepository::removeByRollNumber(
     const std::string& rollNumber) {
     const auto prevRecords = records_;

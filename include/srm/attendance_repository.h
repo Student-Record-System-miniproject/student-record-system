@@ -21,6 +21,9 @@ public:
 
     bool load();
     bool save() const;
+    void upsert(AttendanceRecord record);
+    std::vector<AttendanceRecord> snapshot() const;
+    void restore(std::vector<AttendanceRecord> snapshotRecords);
     bool removeByRollNumber(const std::string& rollNumber);
     const std::vector<AttendanceRecord>& records() const;
 
