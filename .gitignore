@@ -1,4 +1,19 @@
+# Build output
 build/
-test_data/
-winget_result.txt
 build-*/
+
+# Test data
+test_data/
+
+# Runtime data
+data/users.txt
+data/audit.log
+
+# Coverage output
+*.gcov
+coverage-report/*.gcov.json.gz
+coverage-report/functions.json
+coverage-report/cppcheck*.txt
+
+# Other generated files
+winget_result.txt

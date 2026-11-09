@@ -11,17 +11,25 @@ add_library(srm_core
     src/audit_service.cpp
     src/storage_utils.cpp
     src/grade_service.cpp
+    src/grade_repository.cpp
+    src/attendance_repository.cpp
     src/attendance_service.cpp
     src/report_export.cpp
     src/rbac.cpp
+    src/student_repository.cpp
     src/student_service.cpp
     src/auth_service.cpp
+    src/user_repository.cpp
     src/input_validator.cpp
 )
 
 add_library(srm_grade ALIAS srm_core)
 
 target_include_directories(srm_core PUBLIC include)
+
+if(WIN32)
+    target_link_libraries(srm_core PRIVATE bcrypt)
+endif()
 
 if (MSVC)
     target_compile_options(srm_core PRIVATE /W4)
@@ -81,6 +89,11 @@ add_executable(input_validator_tests
     tests/input_validator_tests.cpp
 )
 target_link_libraries(input_validator_tests PRIVATE srm_core)
+
+add_executable(performance_capacity_tests
+    tests/performance_capacity_tests.cpp
+)
+target_link_libraries(performance_capacity_tests PRIVATE srm_core)
 
 enable_testing()
 
