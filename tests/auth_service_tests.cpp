@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include "srm/auth_service.h"
 #include "srm/crypto.h"
 
@@ -229,6 +232,115 @@ void testPasswordHashingAndSecureStorage() {
     std::filesystem::remove(path);
 }
 
+void testAdminCanDeactivateAccount() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-deactivate.tsv";
+    std::filesystem::remove(path);
+
+    {
+        AuthService service(path, TEST_ITERATIONS);
+
+        const auto registration =
+            service.registerUser(adminSession, "deactivate_user",
+                                 "Password123", Role::Student, "S010");
+        assert(registration.success);
+
+        const auto deactivation =
+            service.deactivateAccount(adminSession, "deactivate_user");
+        assert(deactivation.success);
+
+        const auto login =
+            service.login("deactivate_user", "Password123");
+        assert(!login.success);
+        assert(login.error == ErrorCode::AccessDenied);
+    }
+
+    // Verify deactivation persists after restarting the service.
+    {
+        AuthService restartedService(path, TEST_ITERATIONS);
+
+        const auto login =
+            restartedService.login("deactivate_user", "Password123");
+        assert(!login.success);
+        assert(login.error == ErrorCode::AccessDenied);
+    }
+
+    std::filesystem::remove(path);
+}
+
+void testAdminCanResetPassword() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-password-reset.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+
+    const auto registration =
+        service.registerUser(adminSession, "reset_user",
+                             "OldPassword123", Role::Student, "S011");
+    assert(registration.success);
+
+    const auto reset =
+        service.resetPassword(adminSession, "reset_user", "NewPassword456");
+    assert(reset.success);
+
+    // Old password must no longer work.
+    const auto oldLogin =
+        service.login("reset_user", "OldPassword123");
+    assert(!oldLogin.success);
+    assert(oldLogin.error == ErrorCode::InvalidCredentials);
+
+    // New password must work.
+    const auto newLogin =
+        service.login("reset_user", "NewPassword456");
+    assert(newLogin.success);
+
+    std::filesystem::remove(path);
+}
+
+void testNonAdminCannotDeactivateOrResetPassword() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-manage-users-rbac.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+
+    const auto registration =
+        service.registerUser(adminSession, "protected_user",
+                             "Password123", Role::Student, "S012");
+    assert(registration.success);
+
+    // Teacher cannot deactivate or reset the account.
+    const auto teacherDeactivate =
+        service.deactivateAccount(teacherSession, "protected_user");
+    assert(!teacherDeactivate.success);
+    assert(teacherDeactivate.error == ErrorCode::AccessDenied);
+
+    const auto teacherReset =
+        service.resetPassword(teacherSession, "protected_user",
+                              "NewPassword456");
+    assert(!teacherReset.success);
+    assert(teacherReset.error == ErrorCode::AccessDenied);
+
+    // Student cannot deactivate or reset the account.
+    const auto studentDeactivate =
+        service.deactivateAccount(studentSession, "protected_user");
+    assert(!studentDeactivate.success);
+    assert(studentDeactivate.error == ErrorCode::AccessDenied);
+
+    const auto studentReset =
+        service.resetPassword(studentSession, "protected_user",
+                              "NewPassword456");
+    assert(!studentReset.success);
+    assert(studentReset.error == ErrorCode::AccessDenied);
+
+    // Original account remains usable.
+    const auto login = service.login("protected_user", "Password123");
+    assert(login.success);
+
+    std::filesystem::remove(path);
+}
+
 void testCryptoPBKDF2Verification() {
     // Direct test of Crypto utility
     const std::string password = "TestPassword#2026";
@@ -352,5 +464,8 @@ int main() {
     testCryptoPBKDF2Verification();
     testSessionTimeout();
     testSecureInputValidation();
+    testAdminCanDeactivateAccount();
+    testAdminCanResetPassword();
+    testNonAdminCannotDeactivateOrResetPassword();
     return 0;
 }
