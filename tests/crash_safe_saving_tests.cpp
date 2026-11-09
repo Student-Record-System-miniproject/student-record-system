@@ -140,9 +140,15 @@ void testStrandedBackupRecoveryInRepository() {
         StudentRepository repo(testFile);
         const bool loadOk = repo.load();
         assert(loadOk);
-        const bool add1Ok = repo.add({"S101", "Alice Smith", "CSE", "alice@test.edu"});
+        const bool add1Ok = repo.add({
+            "S101", "Alice Smith", "CSE", "alice@test.edu",
+            "2005-04-12", 2, "9876543210"
+        });
         assert(add1Ok);
-        const bool add2Ok = repo.add({"S102", "Bob Jones", "ECE", "bob@test.edu"});
+        const bool add2Ok = repo.add({
+            "S102", "Bob Jones", "ECE", "bob@test.edu",
+            "2004-08-20", 3, "9123456780"
+        });
         assert(add2Ok);
     }
 
@@ -178,9 +184,15 @@ void testStudentRepositoryCrashSafeRestart() {
         StudentRepository repo(testFile);
         const bool load1Ok = repo.load();
         assert(load1Ok);
-        const bool add1Ok = repo.add({"S101", "Alice Smith", "CSE", "alice@test.edu"});
+        const bool add1Ok = repo.add({
+            "S101", "Alice Smith", "CSE", "alice@test.edu",
+            "2005-04-12", 2, "9876543210"
+        });
         assert(add1Ok);
-        const bool add2Ok = repo.add({"S102", "Bob Jones", "ECE", "bob@test.edu"});
+        const bool add2Ok = repo.add({
+            "S102", "Bob Jones", "ECE", "bob@test.edu",
+            "2004-08-20", 3, "9123456780"
+        });
         assert(add2Ok);
     }
 

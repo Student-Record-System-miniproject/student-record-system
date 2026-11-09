@@ -17,8 +17,10 @@ struct StudentRecord {
     std::string name;
     std::string department;
     std::string email;
+    std::string dateOfBirth;
+    int year = 0;
+    std::string contactNumber;
 };
-
 class StudentRepository {
 public:
     explicit StudentRepository(std::filesystem::path filePath);

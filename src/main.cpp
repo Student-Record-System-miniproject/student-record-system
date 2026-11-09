@@ -1,4 +1,4 @@
-
+#include "srm/attendance_service.h"
 #include "srm/audit_service.h"
 #include "srm/auth_service.h"
 #include "srm/common_types.h"
@@ -27,8 +27,10 @@ void displayMenu(const srm::Session& session) {
     }
     else if (session.role == srm::Role::Teacher) {
         std::cout << "\nTeacher Menu\n";
-        std::cout << "1. View student records\n";
-        std::cout << "2. Logout\n";
+        std::cout << "1. Manage student records\n";
+        std::cout << "2. Enter marks\n";
+        std::cout << "3. View reports\n";
+        std::cout << "4. Mark attendance\n";
     }
     else if (session.role == srm::Role::Student) {
         std::cout << "\nStudent Menu\n";
@@ -60,6 +62,106 @@ void displayStudents(const std::vector<srm::StudentRecord>& students) {
     std::cout << "Total records: " << students.size() << "\n";
 }
 
+void manageUsersMenu(srm::AuthService& authService,
+                     const srm::Session& session) {
+    while (true) {
+        std::cout << "\nUser Management\n";
+        std::cout << "1. Create user account\n";
+        std::cout << "2. Deactivate user account\n";
+        std::cout << "3. Unlock user account\n";
+        std::cout << "4. Reset user password\n";
+        std::cout << "5. Back to main menu\n";
+        std::cout << "Enter your choice: ";
+
+        std::string choice;
+        if (!std::getline(std::cin, choice)) {
+            return;
+        }
+
+        int choiceNumber = 0;
+        if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
+            choiceNumber < 1 || choiceNumber > 5) {
+            std::cout << "Invalid choice. Please enter a number between 1 and 5.\n";
+            continue;
+        }
+
+        if (choiceNumber == 5) {
+            return;
+        }
+
+        std::string username;
+        std::cout << "Enter username: ";
+        if (!std::getline(std::cin, username)) {
+            return;
+        }
+
+        srm::OperationResult result;
+
+        if (choiceNumber == 1) {
+            std::string password;
+            std::string roleInput;
+            std::string rollNumber;
+            int roleChoice = 0;
+
+            std::cout << "Enter initial password: ";
+            if (!std::getline(std::cin, password)) {
+                return;
+            }
+
+            std::cout << "Select role:\n";
+            std::cout << "1. Administrator\n";
+            std::cout << "2. Teacher\n";
+            std::cout << "3. Student\n";
+            std::cout << "Enter role choice: ";
+
+            if (!std::getline(std::cin, roleInput)) {
+                return;
+            }
+
+            if (!srm::InputValidator::parseInteger(roleInput, roleChoice) ||
+                roleChoice < 1 || roleChoice > 3) {
+                std::cout << "Invalid role selection.\n";
+                continue;
+            }
+
+            srm::Role role = srm::Role::Administrator;
+
+            if (roleChoice == 2) {
+                role = srm::Role::Teacher;
+            } else if (roleChoice == 3) {
+                role = srm::Role::Student;
+
+                std::cout << "Enter student roll number: ";
+                if (!std::getline(std::cin, rollNumber)) {
+                    return;
+                }
+            }
+
+            result = authService.registerUser(
+                session, username, password, role, rollNumber);
+        }
+        else if (choiceNumber == 2) {
+            result = authService.deactivateAccount(session, username);
+        }
+        else if (choiceNumber == 3) {
+            result = authService.unlockAccount(session, username);
+        }
+        else if (choiceNumber == 4) {
+            std::string newPassword;
+
+            std::cout << "Enter new password: ";
+            if (!std::getline(std::cin, newPassword)) {
+                return;
+            }
+
+            result = authService.resetPassword(
+                session, username, newPassword);
+        }
+
+        std::cout << result.message << "\n";
+    }
+}
+
 int main() {
     // Initialize audit logging.
     srm::AuditService auditService("data/audit.log");
@@ -77,28 +179,20 @@ int main() {
     srm::AuthService authService("data/users.txt");
     authService.setAuditService(&auditService);
 
-    srm::StudentService studentService("data/students.txt");
-    studentService.setAuditService(&auditService);
-
-    // Create the first Administrator account when user storage is empty.
-    if (std::filesystem::exists("data/users.txt") &&
-        std::filesystem::file_size("data/users.txt") == 0) {
-
-        std::cout << "\n================================\n";
-        std::cout << "   INITIAL ADMINISTRATOR SETUP\n";
-        std::cout << "================================\n";
-        std::cout << "No user accounts were found.\n";
-        std::cout << "Create the first Administrator account.\n";
+    // Create the first Administrator account if no users exist.
+    if (!authService.hasUsers()) {
+        std::cout << "\nNo user accounts found.\n";
+        std::cout << "Create the initial Administrator account.\n";
 
         std::string adminUsername;
         std::string adminPassword;
 
-        std::cout << "\nCreate Administrator username: ";
+        std::cout << "Choose Administrator username: ";
         if (!std::getline(std::cin, adminUsername)) {
             return 0;
         }
 
-        std::cout << "Create Administrator password: ";
+        std::cout << "Choose Administrator password: ";
         if (!std::getline(std::cin, adminPassword)) {
             return 0;
         }
@@ -106,18 +200,24 @@ int main() {
         const auto setupResult =
             authService.setupInitialAdmin(adminUsername, adminPassword);
 
+        std::cout << setupResult.message << "\n";
+
         if (!setupResult.success) {
-            std::cout << "\nAdministrator setup failed: "
-                      << setupResult.message << "\n";
-            std::cout << "Next step: Check your inputs and user storage permissions.\n";
             return 1;
         }
-
-        std::cout << "\nAdministrator account created successfully!\n";
-        std::cout << "You can now log in using your new credentials.\n";
     }
 
-    // Main login loop.
+    // Wire audit logging to student service (addressing review feedback)
+    srm::StudentService studentService("data/students.txt");
+    studentService.setAuditService(&auditService);
+
+    // Initialize attendance service and connect it to student records.
+    srm::AttendanceService attendanceService(
+        "data/attendance.txt",
+        [&studentService](const std::string& rollNumber) {
+            return studentService.exists(rollNumber);
+        });
+
     while (true) {
         std::string username;
         std::string password;
@@ -181,27 +281,13 @@ int main() {
             }
 
             int choiceNumber = 0;
+            const int maxChoice =
+                (session.role == srm::Role::Teacher) ? 4 : 3;
 
-            if (!srm::InputValidator::parseInteger(choice, choiceNumber)) {
-                std::cout << "\nInvalid input.\n";
-                std::cout << "Next step: Enter a whole number from the displayed menu.\n";
-                continue;
-            }
-
-            if (choiceNumber == 0) {
-                std::cout << "Exiting Student Record System. Goodbye!\n";
-                return 0;
-            }
-
-            int maxChoice =
-                session.role == srm::Role::Administrator ? 3 : 2;
-
-            if (!srm::InputValidator::validateRange(
-                    choiceNumber, 1, maxChoice)) {
-
-                std::cout << "\nInvalid menu choice.\n";
-                std::cout << "Next step: Select an option between 1 and "
-                          << maxChoice << " from the menu.\n";
+            if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
+                !srm::InputValidator::validateRange(choiceNumber, 1, maxChoice)) {
+                std::cout << "Invalid choice. Please enter a number between 1 and "
+                          << maxChoice << ".\n";
                 continue;
             }
 
@@ -239,51 +325,64 @@ int main() {
                 }
             }
 
-            // Teacher actions.
-            else if (session.role == srm::Role::Teacher) {
-                if (choiceNumber == 1) {
-                    displayStudents(studentService.listStudents(session));
-                }
-                else if (choiceNumber == 2) {
-                    std::cout << "\nLogging out successfully.\n";
-                    loggedIn = false;
-                }
+            // Execute user management action when selected
+            if (choiceNumber == 1 && session.role == srm::Role::Administrator) {
+                manageUsersMenu(authService, session);
             }
 
-            // Student actions.
-            else if (session.role == srm::Role::Student) {
-                if (choiceNumber == 1) {
-                    const auto* student = studentService.getStudent(
-                        session,
-                        session.studentRollNumber
-                    );
-
-                    if (student == nullptr) {
-                        std::cout << "\nYour student profile could not be found.\n";
-                        std::cout << "Next step: Contact an Administrator to verify your account details.\n";
-                    }
-                    else {
-                        std::cout << "\nMy Student Profile\n";
-                        std::cout << "---------------------------------------------\n";
-                        std::cout << "Roll Number : " << student->rollNumber << "\n";
-                        std::cout << "Name        : " << student->name << "\n";
-                        std::cout << "Department  : " << student->department << "\n";
-                        std::cout << "Email       : " << student->email << "\n";
-                        std::cout << "---------------------------------------------\n";
-                    }
-                }
-                else if (choiceNumber == 2) {
-                    std::cout << "\nLogging out successfully.\n";
-                    loggedIn = false;
-                }
+            // Execute student management action when selected
+            else if (choiceNumber == 2 && session.role == srm::Role::Administrator) {
+                const auto students = studentService.searchStudents(session, "");
+                std::cout << "Current registered student count: " << students.size() << "\n";
             }
 
-            auditService.logOperation(
-                session,
-                "MENU_ACTION",
-                "Option_" + std::to_string(choiceNumber),
-                true
-            );
+            // SRM-F-030: Allow teachers to mark student attendance.
+            if (choiceNumber == 4 && session.role == srm::Role::Teacher) {
+                std::string rollNumber;
+                std::string subject;
+                std::string date;
+                std::string statusInput;
+
+                std::cout << "\nMark Student Attendance\n";
+
+                std::cout << "Student Roll Number: ";
+                if (!std::getline(std::cin, rollNumber)) {
+                    return 0;
+                }
+
+                std::cout << "Subject: ";
+                if (!std::getline(std::cin, subject)) {
+                    return 0;
+                }
+
+                std::cout << "Date (YYYY-MM-DD): ";
+                if (!std::getline(std::cin, date)) {
+                    return 0;
+                }
+
+                std::cout << "Attendance (P for Present / A for Absent): ";
+                if (!std::getline(std::cin, statusInput)) {
+                    return 0;
+                }
+
+                srm::AttendanceStatus status;
+
+                if (statusInput == "P" || statusInput == "p") {
+                    status = srm::AttendanceStatus::Present;
+                }
+                else if (statusInput == "A" || statusInput == "a") {
+                    status = srm::AttendanceStatus::Absent;
+                }
+                else {
+                    std::cout << "Invalid attendance status. Enter P or A.\n";
+                    continue;
+                }
+
+                const auto result = attendanceService.markAttendance(
+                    session, rollNumber, subject, date, status);
+
+                std::cout << result.message << "\n";
+            }
 
             session.lastActivity = std::chrono::steady_clock::now();
         }

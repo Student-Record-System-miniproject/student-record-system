@@ -19,6 +19,12 @@ public:
 
     // Validates a confirmation input such as Y/y or N/n.
     static bool validateConfirmation(const std::string& input);
+
+    // Validates a date in YYYY-MM-DD format.
+    static bool validateDateOfBirth(const std::string& date);
+
+    // Validates a 10-digit contact number.
+    static bool validateContactNumber(const std::string& number);
 };
 
 }  // namespace srm
