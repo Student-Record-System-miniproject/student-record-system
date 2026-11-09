@@ -21,7 +21,7 @@ OperationResult failure(ErrorCode error, std::string message) {
 
 struct GradeInfo {
     std::string letterGrade;
-    double gradePoint;
+    double gradePoint = 0.0;
 };
 
 GradeInfo calculateGrade(double marks) {
@@ -34,114 +34,90 @@ GradeInfo calculateGrade(double marks) {
     return {"F", 0.0};
 }
 
+using SemesterRecords =
+    std::map<int, std::vector<const MarkRecord*>>;
+
+struct OverallGradeTotals {
+    int totalMarks = 0;
+    int subjectCount = 0;
+    double totalGradePoints = 0.0;
+};
+
+SemesterRecords collectSemesterRecords(
+    const std::vector<MarkRecord>& records,
+    const std::string& rollNumber) {
+
+    SemesterRecords semesterRecords;
+
+    for (const MarkRecord& record : records) {
+        if (record.rollNumber == rollNumber) {
+            semesterRecords[record.semester].push_back(&record);
+        }
+    }
+
+    return semesterRecords;
+}
+
+void appendSemesterReport(
+    std::ostringstream& report,
+    int semesterNumber,
+    const std::vector<const MarkRecord*>& records,
+    OverallGradeTotals& overall) {
+
+    int semesterTotal = 0;
+    double semesterGradePoints = 0.0;
+
+    report << "\nSemester " << semesterNumber << '\n';
+
+    for (const MarkRecord* record : records) {
+        const GradeInfo grade = calculateGrade(record->marks);
+
+        report << record->subject
+               << " | Marks " << record->marks
+               << " | Grade " << grade.letterGrade
+               << " | Grade Points " << grade.gradePoint << '\n';
+
+        semesterTotal += record->marks;
+        semesterGradePoints += grade.gradePoint;
+    }
+
+    const int subjectCount = static_cast<int>(records.size());
+
+    const double percentage =
+        static_cast<double>(semesterTotal) / subjectCount;
+
+    const double gpa = semesterGradePoints / subjectCount;
+
+    const GradeInfo semesterGrade = calculateGrade(percentage);
+
+    report << "Semester Percentage: " << percentage << "%\n";
+    report << "Semester Grade: " << semesterGrade.letterGrade << '\n';
+    report << "Semester GPA: " << gpa << '\n';
+
+    overall.totalMarks += semesterTotal;
+    overall.subjectCount += subjectCount;
+    overall.totalGradePoints += semesterGradePoints;
+}
+
+void appendOverallResult(
+    std::ostringstream& report,
+    const OverallGradeTotals& overall) {
+
+    const double percentage =
+        static_cast<double>(overall.totalMarks) / overall.subjectCount;
+
+    const double gpa =
+        overall.totalGradePoints / overall.subjectCount;
+
+    const GradeInfo grade = calculateGrade(percentage);
+
+    report << "\nOverall Result\n";
+    report << "Overall Percentage: " << percentage << "%\n";
+    report << "Overall Grade: " << grade.letterGrade << '\n';
+    report << "Overall GPA: " << gpa << '\n';
+}
+
 }  // namespace
-
-GradeRepository::GradeRepository(std::filesystem::path filePath)
-    : filePath_(std::move(filePath)) {}
-
-
-bool GradeRepository::load() {
-    recoverInterruptedSave(filePath_);
-    records_.clear();
-
-    std::ifstream input(filePath_);
-    if (!input) {
-        return !std::filesystem::exists(filePath_);
-    }
-
-    // Track each unique student-subject-semester combination.
-    // This avoids repeatedly scanning the records vector.
-    std::unordered_map<std::string, std::size_t> recordIndices;
-
-    std::string line;
-    while (std::getline(input, line)) {
-        std::istringstream row(line);
-        MarkRecord record;
-        std::string semester;
-        std::string marks;
-
-        if (!std::getline(row, record.rollNumber, '\t') ||
-            !std::getline(row, record.subject, '\t') ||
-            !std::getline(row, semester, '\t') ||
-            !std::getline(row, marks) ||
-            !InputValidator::validateText(record.rollNumber) ||
-            !InputValidator::validateText(record.subject) ||
-            !InputValidator::parseInteger(semester, record.semester) ||
-            !InputValidator::parseInteger(marks, record.marks) ||
-            record.semester <= 0 ||
-            !InputValidator::validateRange(record.marks, 0, 100)) {
-            records_.clear();
-            return false;
-        }
-
-        const std::string key =
-            record.rollNumber + '\t' +
-            record.subject + '\t' +
-            std::to_string(record.semester);
-
-        const auto existing = recordIndices.find(key);
-
-        if (existing != recordIndices.end()) {
-            // Preserve upsert behaviour: latest marks win.
-            records_[existing->second].marks = record.marks;
-        } else {
-            recordIndices.emplace(key, records_.size());
-            records_.push_back(std::move(record));
-        }
-    }
-
-    return true;
-}
-
-bool GradeRepository::save() const {
-    return atomicWriteFile(filePath_, [&](std::ostream& output) {
-        for (const MarkRecord& record : records_) {
-            output << record.rollNumber << '\t' << record.subject << '\t'
-                   << record.semester << '\t' << record.marks << '\n';
-        }
-        return output.good();
-    });
-}
-
-void GradeRepository::upsert(MarkRecord record) {
-    for (MarkRecord& existing : records_) {
-        if (existing.rollNumber == record.rollNumber &&
-            existing.subject == record.subject &&
-            existing.semester == record.semester) {
-            existing.marks = record.marks;
-            return;
-        }
-    }
-    records_.push_back(std::move(record));
-}
-
-std::vector<MarkRecord> GradeRepository::snapshot() const {
-    return records_;
-}
-
-void GradeRepository::restore(std::vector<MarkRecord> records) {
-    records_ = std::move(records);
-}
-
-bool GradeRepository::removeByRollNumber(const std::string& rollNumber) {
-    const auto prevRecords = records_;
-    const auto initialSize = records_.size();
-    records_.erase(
-        std::remove_if(records_.begin(), records_.end(),
-                       [&](const MarkRecord& r) { return r.rollNumber == rollNumber; }),
-        records_.end());
-    if (records_.size() != initialSize) {
-        if (!save()) {
-            records_ = prevRecords;
-            return false;
-        }
-    }
-    return true;
-}
-
-const std::vector<MarkRecord>& GradeRepository::records() const {
-    return records_;
-}
 
 GradeService::GradeService(std::filesystem::path gradeFile,
                            ExistsCheck studentExists,
@@ -200,6 +176,7 @@ ReportResult GradeService::generateReportCard(
                         : Operation::ViewAnyStudentReportCard;
 
     const auto auth = AccessController::authorize(session, op, rollNumber);
+
     if (!auth.success) {
         return {false, auth.error, auth.message, {}};
     }
@@ -216,84 +193,23 @@ ReportResult GradeService::generateReportCard(
 
     std::ostringstream report;
     report << std::fixed << std::setprecision(2);
-
     report << "Report card for " << rollNumber << '\n';
 
-    std::map<int, std::vector<const MarkRecord*>> semesterRecords;
+    const auto semesters =
+        collectSemesterRecords(repository_.records(), rollNumber);
 
-    int overallTotal = 0;
-    int overallSubjects = 0;
-    double overallGradePoints = 0.0;
-
-    for (const MarkRecord& record : repository_.records()) {
-        if (record.rollNumber == rollNumber) {
-            semesterRecords[record.semester].push_back(&record);
-        }
-    }
-
-    if (semesterRecords.empty()) {
+    if (semesters.empty()) {
         report << "No marks available.\n";
         return {true, ErrorCode::None, "Report generated.", report.str()};
     }
 
-    // Calculate results for each semester.
-    for (const auto& semester : semesterRecords) {
-        int semesterTotal = 0;
-        double semesterGradePoints = 0.0;
+    OverallGradeTotals overall;
 
-        report << "\nSemester " << semester.first << '\n';
-
-        for (const MarkRecord* record : semester.second) {
-            const GradeInfo grade = calculateGrade(record->marks);
-
-            report << record->subject
-                   << " | Marks " << record->marks
-                   << " | Grade " << grade.letterGrade
-                   << " | Grade Points " << grade.gradePoint << '\n';
-
-            semesterTotal += record->marks;
-            semesterGradePoints += grade.gradePoint;
-        }
-
-        const int subjectCount =
-            static_cast<int>(semester.second.size());
-
-        const double percentage =
-            static_cast<double>(semesterTotal) / subjectCount;
-
-        const double gpa =
-            semesterGradePoints / subjectCount;
-
-        const GradeInfo overallSemesterGrade =
-            calculateGrade(percentage);
-
-        report << "Semester Percentage: " << percentage << "%\n";
-        report << "Semester Grade: "
-               << overallSemesterGrade.letterGrade << '\n';
-        report << "Semester GPA: " << gpa << '\n';
-
-        overallTotal += semesterTotal;
-        overallSubjects += subjectCount;
-        overallGradePoints += semesterGradePoints;
+    for (const auto& [semesterNumber, records] : semesters) {
+        appendSemesterReport(report, semesterNumber, records, overall);
     }
 
-    // Calculate the overall result across all semesters.
-    const double overallPercentage =
-        static_cast<double>(overallTotal) / overallSubjects;
-
-    const double overallGPA =
-        overallGradePoints / overallSubjects;
-
-    const GradeInfo overallGrade =
-        calculateGrade(overallPercentage);
-
-    report << "\nOverall Result\n";
-    report << "Overall Percentage: "
-           << overallPercentage << "%\n";
-    report << "Overall Grade: "
-           << overallGrade.letterGrade << '\n';
-    report << "Overall GPA: "
-           << overallGPA << '\n';
+    appendOverallResult(report, overall);
 
     return {true, ErrorCode::None, "Report generated.", report.str()};
 }

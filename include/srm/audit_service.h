@@ -13,7 +13,7 @@ namespace srm {
 struct AuditEntry {
     std::string timestamp;        // ISO 8601 UTC timestamp: YYYY-MM-DDTHH:MM:SSZ
     std::string username;         // Actor who performed the action
-    Role role;                    // Actor's role
+    Role role = Role::Student;                    // Actor's role
     std::string action;           // e.g. LOGIN_SUCCESS, LOGIN_FAILED, ACCOUNT_LOCKED, ACCOUNT_UNLOCKED,
                                   // CREATE_STUDENT, UPDATE_STUDENT, DELETE_STUDENT, ENTER_MARKS,
                                   // SECURITY_VIOLATION, BACKUP_DATA, RESTORE_DATA

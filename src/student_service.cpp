@@ -12,143 +12,40 @@
 namespace srm {
 namespace {
 
-std::string toLower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
+OperationResult completeStudentDeletion(
+    StudentRepository& repository,
+    const StudentService::CascadeDeleteHook& cascadeDelete,
+    AuditService* auditService,
+    bool requireAudit,
+    const Session& session,
+    const std::string& rollNumber,
+    const StudentRecord& studentSnapshot) {
+
+    if (cascadeDelete && !cascadeDelete(rollNumber)) {
+        repository.add(studentSnapshot);
+
+        return {false, ErrorCode::StorageFailure,
+                "Cascade deletion of associated records failed. Operation rolled back."};
+    }
+
+    if (auditService) {
+        const bool logged = auditService->logOperation(
+            session, "DELETE_STUDENT", rollNumber, true,
+            "Student record and associated records deleted");
+
+        if (!logged && requireAudit) {
+            repository.add(studentSnapshot);
+
+            return {false, ErrorCode::StorageFailure,
+                    "Operation aborted: Audit logging failure (fail-secure policy)"};
+        }
+    }
+
+    return {true, ErrorCode::None,
+            "Student record and associated records deleted."};
 }
 
 }  // namespace
-
-StudentRepository::StudentRepository(std::filesystem::path filePath)
-    : filePath_(std::move(filePath)) {}
-
-bool StudentRepository::load() {
-    recoverInterruptedSave(filePath_);
-    records_.clear();
-    std::ifstream input(filePath_);
-    if (!input) {
-        return !std::filesystem::exists(filePath_);
-    }
-
-    std::string line;
-    while (std::getline(input, line)) {
-        std::istringstream row(line);
-        StudentRecord student;
-        std::string yearText;
-
-        if (!std::getline(row, student.rollNumber, '\t') ||
-            !std::getline(row, student.name, '\t') ||
-            !std::getline(row, student.department, '\t') ||
-            !std::getline(row, student.email, '\t') ||
-            !std::getline(row, student.dateOfBirth, '\t') ||
-            !std::getline(row, yearText, '\t') ||
-            !std::getline(row, student.contactNumber) ||
-            !InputValidator::validateText(student.rollNumber) ||
-            !InputValidator::validateText(student.name) ||
-            !InputValidator::validateText(student.department) ||
-            !InputValidator::validateText(student.email) ||
-            !InputValidator::validateDateOfBirth(student.dateOfBirth) ||
-            !InputValidator::validateContactNumber(student.contactNumber) ||
-            !InputValidator::parseInteger(yearText, student.year) ||
-            !InputValidator::validateRange(student.year, 1, 4)) {
-            records_.clear();
-            return false;
-        }
-
-        records_.push_back(std::move(student));
-    }
-
-    return true;
-}
-
-bool StudentRepository::save() const {
-    return atomicWriteFile(filePath_, [&](std::ostream& output) {
-        for (const StudentRecord& student : records_) {
-            output << student.rollNumber << '\t'
-                   << student.name << '\t'
-                   << student.department << '\t'
-                   << student.email << '\t'
-                   << student.dateOfBirth << '\t'
-                   << student.year << '\t'
-                   << student.contactNumber << '\n';
-        }
-        return output.good();
-    });
-}
-
-bool StudentRepository::add(StudentRecord student) {
-    if (findByRollNumber(student.rollNumber) != nullptr) {
-        return false;
-    }
-    records_.push_back(std::move(student));
-    if (!save()) {
-        records_.pop_back();
-        return false;
-    }
-    return true;
-}
-
-bool StudentRepository::update(const std::string& rollNumber,
-                               const std::string& name,
-                               const std::string& department,
-                               const std::string& email) {
-    for (StudentRecord& record : records_) {
-        if (record.rollNumber == rollNumber) {
-            const auto oldRecord = record;
-            record.name = name;
-            record.department = department;
-            record.email = email;
-            if (!save()) {
-                record = oldRecord;
-                return false;
-            }
-            return true;
-        }
-    }
-    return false;
-}
-
-bool StudentRepository::remove(const std::string& rollNumber) {
-    const auto prevRecords = records_;
-    const auto initialSize = records_.size();
-    records_.erase(
-        std::remove_if(records_.begin(), records_.end(),
-                       [&](const StudentRecord& r) { return r.rollNumber == rollNumber; }),
-        records_.end());
-    if (records_.size() != initialSize) {
-        if (!save()) {
-            records_ = prevRecords;
-            return false;
-        }
-        return true;
-    }
-    return false;
-}
-
-const StudentRecord* StudentRepository::findByRollNumber(const std::string& rollNumber) const {
-    for (const StudentRecord& record : records_) {
-        if (record.rollNumber == rollNumber) {
-            return &record;
-        }
-    }
-    return nullptr;
-}
-
-std::vector<StudentRecord> StudentRepository::searchByName(const std::string& query) const {
-    std::vector<StudentRecord> matches;
-    const std::string queryLower = toLower(query);
-    for (const StudentRecord& record : records_) {
-        if (toLower(record.name).find(queryLower) != std::string::npos) {
-            matches.push_back(record);
-        }
-    }
-    return matches;
-}
-
-const std::vector<StudentRecord>& StudentRepository::records() const {
-    return records_;
-}
 
 StudentService::StudentService(std::filesystem::path studentFile,
                                CascadeDeleteHook cascadeDelete)
@@ -232,15 +129,21 @@ OperationResult StudentService::updateStudent(const Session& session,
     return {true, ErrorCode::None, "Student record updated successfully."};
 }
 
-OperationResult StudentService::deleteStudent(const Session& session,
-                                              const std::string& rollNumber,
-                                              const std::string& confirmation) {
-    const auto auth = AccessController::authorize(session, Operation::DeleteStudent);
+OperationResult StudentService::deleteStudent(
+    const Session& session,
+    const std::string& rollNumber,
+    const std::string& confirmation) {
+
+    const auto auth =
+        AccessController::authorize(session, Operation::DeleteStudent);
+
     if (!auth.success) {
         return auth;
     }
+
     if (!storageReady_) {
-        return {false, ErrorCode::StorageFailure, "Student storage is not ready."};
+        return {false, ErrorCode::StorageFailure,
+                "Student storage is not ready."};
     }
 
     if (!InputValidator::validateText(rollNumber)) {
@@ -257,36 +160,24 @@ OperationResult StudentService::deleteStudent(const Session& session,
         return {false, ErrorCode::None,
                 "Deletion cancelled. Student record retained."};
     }
+
     const auto* existing = repository_.findByRollNumber(rollNumber);
+
     if (existing == nullptr) {
-        return {false, ErrorCode::StudentNotFound, "Student record not found."};
+        return {false, ErrorCode::StudentNotFound,
+                "Student record not found."};
     }
+
     const auto studentSnapshot = *existing;
 
     if (!repository_.remove(rollNumber)) {
-        return {false, ErrorCode::StorageFailure, "Failed to delete student record from storage."};
+        return {false, ErrorCode::StorageFailure,
+                "Failed to delete student record from storage."};
     }
 
-    // Cascade deletion: remove student's grades and attendance
-    if (cascadeDelete_) {
-        if (!cascadeDelete_(rollNumber)) {
-            // Rollback student deletion if cascade fails
-            repository_.add(studentSnapshot);
-            return {false, ErrorCode::StorageFailure,
-                    "Cascade deletion of associated records failed. Operation rolled back."};
-        }
-    }
-
-    if (auditService_) {
-        const bool logged = auditService_->logOperation(session, "DELETE_STUDENT", rollNumber, true,
-                                                        "Student record and associated records deleted");
-        if (!logged && requireAudit_) {
-            repository_.add(studentSnapshot);
-            return {false, ErrorCode::StorageFailure, "Operation aborted: Audit logging failure (fail-secure policy)"};
-        }
-    }
-
-    return {true, ErrorCode::None, "Student record and associated records deleted."};
+    return completeStudentDeletion(
+        repository_, cascadeDelete_, auditService_, requireAudit_,
+        session, rollNumber, studentSnapshot);
 }
 
 const StudentRecord* StudentService::getStudent(const Session& session,
@@ -349,8 +240,8 @@ bool StudentService::exists(const std::string& rollNumber) const {
     return repository_.findByRollNumber(rollNumber) != nullptr;
 }
 
-void StudentService::setAuditService(AuditService* auditService, bool requireAudit) {
-    auditService_ = auditService;
+void StudentService::setAuditService(AuditService* service, bool requireAudit) {
+    auditService_ = service;
     requireAudit_ = requireAudit;
 }
 

@@ -11,11 +11,15 @@ add_library(srm_core
     src/audit_service.cpp
     src/storage_utils.cpp
     src/grade_service.cpp
+    src/grade_repository.cpp
+    src/attendance_repository.cpp
     src/attendance_service.cpp
     src/report_export.cpp
     src/rbac.cpp
+    src/student_repository.cpp
     src/student_service.cpp
     src/auth_service.cpp
+    src/user_repository.cpp
     src/input_validator.cpp
 )
 
