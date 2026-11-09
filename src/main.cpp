@@ -1,3 +1,4 @@
+#include "srm/attendance_service.h"
 #include "srm/audit_service.h"
 #include "srm/auth_service.h"
 #include "srm/common_types.h"
@@ -25,6 +26,7 @@ void displayMenu(const srm::Session& session) {
         std::cout << "1. Manage student records\n";
         std::cout << "2. Enter marks\n";
         std::cout << "3. View reports\n";
+        std::cout << "4. Mark attendance\n";
     }
     else if (session.role == srm::Role::Student) {
         std::cout << "\nStudent Menu\n";
@@ -50,6 +52,13 @@ int main() {
     // Wire audit logging to student service (addressing review feedback)
     srm::StudentService studentService("data/students.txt");
     studentService.setAuditService(&auditService);
+
+    // Initialize attendance service and connect it to student records.
+    srm::AttendanceService attendanceService(
+        "data/attendance.txt",
+        [&studentService](const std::string& rollNumber) {
+            return studentService.exists(rollNumber);
+        });
 
     while (true) {
         std::string username;
@@ -88,9 +97,13 @@ int main() {
             }
 
             int choiceNumber = 0;
+            const int maxChoice =
+                (session.role == srm::Role::Teacher) ? 4 : 3;
+
             if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
-                !srm::InputValidator::validateRange(choiceNumber, 1, 3)) {
-                std::cout << "Invalid choice. Please enter a number between 1 and 3.\n";
+                !srm::InputValidator::validateRange(choiceNumber, 1, maxChoice)) {
+                std::cout << "Invalid choice. Please enter a number between 1 and "
+                          << maxChoice << ".\n";
                 continue;
             }
 
@@ -110,6 +123,54 @@ int main() {
             if (choiceNumber == 2 && session.role == srm::Role::Administrator) {
                 const auto students = studentService.searchStudents(session, "");
                 std::cout << "Current registered student count: " << students.size() << "\n";
+            }
+
+            // SRM-F-030: Allow teachers to mark student attendance.
+            if (choiceNumber == 4 && session.role == srm::Role::Teacher) {
+                std::string rollNumber;
+                std::string subject;
+                std::string date;
+                std::string statusInput;
+
+                std::cout << "\nMark Student Attendance\n";
+
+                std::cout << "Student Roll Number: ";
+                if (!std::getline(std::cin, rollNumber)) {
+                    return 0;
+                }
+
+                std::cout << "Subject: ";
+                if (!std::getline(std::cin, subject)) {
+                    return 0;
+                }
+
+                std::cout << "Date (YYYY-MM-DD): ";
+                if (!std::getline(std::cin, date)) {
+                    return 0;
+                }
+
+                std::cout << "Attendance (P for Present / A for Absent): ";
+                if (!std::getline(std::cin, statusInput)) {
+                    return 0;
+                }
+
+                srm::AttendanceStatus status;
+
+                if (statusInput == "P" || statusInput == "p") {
+                    status = srm::AttendanceStatus::Present;
+                }
+                else if (statusInput == "A" || statusInput == "a") {
+                    status = srm::AttendanceStatus::Absent;
+                }
+                else {
+                    std::cout << "Invalid attendance status. Enter P or A.\n";
+                    continue;
+                }
+
+                const auto result = attendanceService.markAttendance(
+                    session, rollNumber, subject, date, status);
+
+                std::cout << result.message << "\n";
             }
 
             session.lastActivity = std::chrono::steady_clock::now();

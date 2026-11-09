@@ -1,9 +1,14 @@
 #include "srm/attendance_service.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
+#include <iterator>
 
 namespace {
 
@@ -11,6 +16,7 @@ using srm::AttendanceService;
 using srm::ErrorCode;
 using srm::Role;
 using srm::Session;
+using srm::AttendanceStatus;
 
 const Session teacher{Role::Teacher, true, {}};
 const Session ownStudent{Role::Student, true, "S001"};
@@ -101,6 +107,142 @@ void testSecureInputValidation() {
     std::filesystem::remove(path);
 }
 
+void testTeacherCanMarkPresentAndAbsent() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-attendance-marking.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    // Mark student Present on the first date.
+    const auto presentResult = service.markAttendance(
+        teacher, "S001", "Mathematics", "2020-01-01",
+        AttendanceStatus::Present);
+
+    assert(presentResult.success);
+
+    auto report = service.generateReport(ownStudent, "S001");
+
+    assert(report.success);
+    assert(report.report.find("Present 1/1") != std::string::npos);
+    assert(report.report.find("100.0%") != std::string::npos);
+
+    // Change the same date to Absent.
+    const auto absentResult = service.markAttendance(
+        teacher, "S001", "Mathematics", "2020-01-01",
+        AttendanceStatus::Absent);
+
+    assert(absentResult.success);
+
+    report = service.generateReport(ownStudent, "S001");
+
+    // Verify that the existing record was updated.
+    assert(report.success);
+    assert(report.report.find("Present 0/1") != std::string::npos);
+    assert(report.report.find("0.0%") != std::string::npos);
+
+    // Mark attendance for a different date.
+    const auto secondDateResult = service.markAttendance(
+        teacher, "S001", "Mathematics", "2020-01-02",
+        AttendanceStatus::Present);
+
+    assert(secondDateResult.success);
+
+    // Verify that both dates are counted separately.
+    report = service.generateReport(ownStudent, "S001");
+
+    assert(report.success);
+    assert(report.report.find("Present 1/2") != std::string::npos);
+    assert(report.report.find("50.0%") != std::string::npos);
+
+    // Verify that both records are stored in the file.
+    std::ifstream input(path);
+
+    const std::string savedData(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+
+    assert(savedData.find("S001\tMathematics\t2020-01-01\tA") !=
+           std::string::npos);
+
+    assert(savedData.find("S001\tMathematics\t2020-01-02\tP") !=
+           std::string::npos);
+
+    input.close();
+    std::filesystem::remove(path);
+}
+
+void testFutureAttendanceDateIsRejected() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-attendance-future.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    const auto result = service.markAttendance(
+        teacher, "S001", "Mathematics", "2999-12-31",
+        AttendanceStatus::Present);
+
+    assert(!result.success);
+    assert(result.error == ErrorCode::InvalidInput);
+
+    std::filesystem::remove(path);
+}
+
+void testInvalidAttendanceDatesAreRejected() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-attendance-invalid-date.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    const std::vector<std::string> invalidDates = {
+        "2026-13-01",
+        "2026-02-29",
+        "2026-04-31",
+        "2026-1-01",
+        "not-a-date",
+        "2026-00-10"
+    };
+
+    for (const std::string& date : invalidDates) {
+        const auto result = service.markAttendance(
+            teacher, "S001", "Mathematics", date,
+            AttendanceStatus::Present);
+
+        assert(!result.success);
+        assert(result.error == ErrorCode::InvalidInput);
+    }
+
+    std::filesystem::remove(path);
+}
+
+void testAttendanceMarkingPermissionsAndStudentValidation() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-attendance-permissions.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    // Students cannot mark attendance.
+    const auto studentResult = service.markAttendance(
+        ownStudent, "S001", "Mathematics", "2020-01-01",
+        AttendanceStatus::Present);
+
+    assert(!studentResult.success);
+    assert(studentResult.error == ErrorCode::AccessDenied);
+
+    // Teachers cannot mark attendance for nonexistent students.
+    const auto invalidStudentResult = service.markAttendance(
+        teacher, "S999", "Mathematics", "2020-01-01",
+        AttendanceStatus::Present);
+
+    assert(!invalidStudentResult.success);
+    assert(invalidStudentResult.error == ErrorCode::StudentNotFound);
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -108,5 +250,9 @@ int main() {
     testStudentCanViewOwnReport();
     testStudentCannotViewAnotherReport();
     testSecureInputValidation();
+    testTeacherCanMarkPresentAndAbsent();
+    testFutureAttendanceDateIsRejected();
+    testInvalidAttendanceDatesAreRejected();
+    testAttendanceMarkingPermissionsAndStudentValidation();
     return 0;
 }
