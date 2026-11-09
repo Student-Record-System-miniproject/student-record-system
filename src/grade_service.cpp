@@ -10,6 +10,7 @@
 #include <utility>
 #include <iomanip>
 #include <map>
+#include <unordered_map>
 
 namespace srm {
 namespace {
@@ -38,13 +39,19 @@ GradeInfo calculateGrade(double marks) {
 GradeRepository::GradeRepository(std::filesystem::path filePath)
     : filePath_(std::move(filePath)) {}
 
+
 bool GradeRepository::load() {
     recoverInterruptedSave(filePath_);
     records_.clear();
+
     std::ifstream input(filePath_);
     if (!input) {
         return !std::filesystem::exists(filePath_);
     }
+
+    // Track each unique student-subject-semester combination.
+    // This avoids repeatedly scanning the records vector.
+    std::unordered_map<std::string, std::size_t> recordIndices;
 
     std::string line;
     while (std::getline(input, line)) {
@@ -52,6 +59,7 @@ bool GradeRepository::load() {
         MarkRecord record;
         std::string semester;
         std::string marks;
+
         if (!std::getline(row, record.rollNumber, '\t') ||
             !std::getline(row, record.subject, '\t') ||
             !std::getline(row, semester, '\t') ||
@@ -65,8 +73,23 @@ bool GradeRepository::load() {
             records_.clear();
             return false;
         }
-        upsert(std::move(record));
+
+        const std::string key =
+            record.rollNumber + '\t' +
+            record.subject + '\t' +
+            std::to_string(record.semester);
+
+        const auto existing = recordIndices.find(key);
+
+        if (existing != recordIndices.end()) {
+            // Preserve upsert behaviour: latest marks win.
+            records_[existing->second].marks = record.marks;
+        } else {
+            recordIndices.emplace(key, records_.size());
+            records_.push_back(std::move(record));
+        }
     }
+
     return true;
 }
 

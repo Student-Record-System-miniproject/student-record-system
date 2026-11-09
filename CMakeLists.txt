@@ -86,6 +86,11 @@ add_executable(input_validator_tests
 )
 target_link_libraries(input_validator_tests PRIVATE srm_core)
 
+add_executable(performance_capacity_tests
+    tests/performance_capacity_tests.cpp
+)
+target_link_libraries(performance_capacity_tests PRIVATE srm_core)
+
 enable_testing()
 
 add_test(NAME grade_service_tests COMMAND grade_service_tests)
