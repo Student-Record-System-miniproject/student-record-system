@@ -23,6 +23,10 @@ add_library(srm_grade ALIAS srm_core)
 
 target_include_directories(srm_core PUBLIC include)
 
+if(WIN32)
+    target_link_libraries(srm_core PRIVATE bcrypt)
+endif()
+
 if (MSVC)
     target_compile_options(srm_core PRIVATE /W4)
 else()

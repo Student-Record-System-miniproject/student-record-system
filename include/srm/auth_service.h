@@ -48,7 +48,7 @@ private:
 class AuthService {
 public:
     explicit AuthService(std::filesystem::path userFile,
-                         unsigned int hashIterations = 10000);
+                         unsigned int hashIterations = 600000);
 
     // Initial setup mechanism: creates the first Administrator account.
     // Allowed only when no user accounts exist in the repository.

@@ -8,6 +8,12 @@
 #include <chrono>
 #include <iostream>
 #include <string>
+#ifdef _WIN32
+#include <conio.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 void displayMenu(const srm::Session& session) {
     std::cout << "\nLogin successful.\n";
@@ -32,6 +38,94 @@ void displayMenu(const srm::Session& session) {
         std::cout << "2. View marks\n";
         std::cout << "3. View report card\n";
     }
+}
+
+bool readMaskedPassword(const std::string& prompt,
+                        std::string& password) {
+    std::cout << prompt;
+    password.clear();
+
+#ifdef _WIN32
+    while (true) {
+        int ch = _getch();
+
+        if (ch == '\r') {
+            std::cout << '\n';
+            return true;
+        }
+
+        if (ch == '\b') {
+            if (!password.empty()) {
+                password.pop_back();
+                std::cout << "\b \b" << std::flush;
+            }
+            continue;
+        }
+
+        // Ignore special keys such as arrow keys.
+        if (ch == 0 || ch == 224) {
+            (void)_getch();
+            continue;
+        }
+
+        if (ch == 3) {
+            std::cout << '\n';
+            return false;
+        }
+
+        if (ch >= 32 && ch != 127) {
+            password.push_back(static_cast<char>(ch));
+            std::cout << '*' << std::flush;
+        }
+    }
+
+#else
+    termios originalSettings{};
+
+    if (tcgetattr(STDIN_FILENO, &originalSettings) != 0) {
+        std::cerr << "\nUnable to configure masked password input.\n";
+        return false;
+    }
+
+    termios maskedSettings = originalSettings;
+    maskedSettings.c_lflag &= static_cast<tcflag_t>(~(ECHO | ICANON));
+    maskedSettings.c_cc[VMIN] = 1;
+    maskedSettings.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &maskedSettings) != 0) {
+        std::cerr << "\nUnable to configure masked password input.\n";
+        return false;
+    }
+
+    while (true) {
+        char ch;
+
+        if (!std::cin.get(ch)) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &originalSettings);
+            std::cout << '\n';
+            return false;
+        }
+
+        if (ch == '\n' || ch == '\r') {
+            tcsetattr(STDIN_FILENO, TCSANOW, &originalSettings);
+            std::cout << '\n';
+            return true;
+        }
+
+        if (ch == '\b' || ch == 127) {
+            if (!password.empty()) {
+                password.pop_back();
+                std::cout << "\b \b" << std::flush;
+            }
+            continue;
+        }
+
+        if (static_cast<unsigned char>(ch) >= 32) {
+            password.push_back(ch);
+            std::cout << '*' << std::flush;
+        }
+    }
+#endif
 }
 
 void manageUsersMenu(srm::AuthService& authService,
@@ -75,8 +169,7 @@ void manageUsersMenu(srm::AuthService& authService,
             std::string rollNumber;
             int roleChoice = 0;
 
-            std::cout << "Enter initial password: ";
-            if (!std::getline(std::cin, password)) {
+            if (!readMaskedPassword("Enter initial password: ", password)) {
                 return;
             }
 
@@ -121,10 +214,9 @@ void manageUsersMenu(srm::AuthService& authService,
         else if (choiceNumber == 4) {
             std::string newPassword;
 
-            std::cout << "Enter new password: ";
-            if (!std::getline(std::cin, newPassword)) {
-                return;
-            }
+            if (!readMaskedPassword("Enter new password: ", newPassword)) {
+    return;
+}
 
             result = authService.resetPassword(
                 session, username, newPassword);
@@ -160,8 +252,7 @@ int main() {
             return 0;
         }
 
-        std::cout << "Choose Administrator password: ";
-        if (!std::getline(std::cin, adminPassword)) {
+        if (!readMaskedPassword("Choose Administrator password: ", adminPassword)) {
             return 0;
         }
 
@@ -190,9 +281,7 @@ int main() {
             return 0;
         }
 
-        std::cout << "Password: ";
-
-        if (!std::getline(std::cin, password)) {
+        if (!readMaskedPassword("Password: ", password)) {
             return 0;
         }
 

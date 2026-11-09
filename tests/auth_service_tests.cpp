@@ -3,6 +3,7 @@
 #endif
 #include "srm/auth_service.h"
 #include "srm/crypto.h"
+#include "srm/audit_service.h"
 
 #include <cassert>
 #include <filesystem>
@@ -341,24 +342,134 @@ void testNonAdminCannotDeactivateOrResetPassword() {
     std::filesystem::remove(path);
 }
 
+void testPasswordsNeverAppearInAuditLogs() {
+    const auto userPath =
+        std::filesystem::temp_directory_path() / "srm-auth-audit-security.tsv";
+
+    const auto auditPath =
+        std::filesystem::temp_directory_path() / "srm-password-audit.log";
+
+    std::filesystem::remove(userPath);
+    std::filesystem::remove(auditPath);
+
+    const std::string initialPassword = "InitialSecret@123";
+    const std::string wrongPassword = "WrongSecret@456";
+    const std::string newPassword = "NewSecret@789";
+
+    {
+        srm::AuditService auditService(auditPath);
+        AuthService service(userPath, TEST_ITERATIONS);
+        service.setAuditService(&auditService);
+
+        // Register a user.
+        const auto registration = service.registerUser(
+            adminSession, "audit_user", initialPassword, Role::Teacher);
+        assert(registration.success);
+
+        // Failed login.
+        const auto failedLogin =
+            service.login("audit_user", wrongPassword);
+        assert(!failedLogin.success);
+
+        // Successful login.
+        const auto successfulLogin =
+            service.login("audit_user", initialPassword);
+        assert(successfulLogin.success);
+
+        // Reset password.
+        const auto reset = service.resetPassword(
+            adminSession, "audit_user", newPassword);
+        assert(reset.success);
+
+        // Login using the new password.
+        const auto newLogin =
+            service.login("audit_user", newPassword);
+        assert(newLogin.success);
+    }
+
+    // Read the complete audit log.
+    std::ifstream file(auditPath);
+    assert(file.is_open());
+
+    const std::string auditContents(
+        (std::istreambuf_iterator<char>(file)),
+        std::istreambuf_iterator<char>());
+
+    file.close();
+
+    // None of the supplied passwords may appear in the audit log.
+    assert(auditContents.find(initialPassword) == std::string::npos);
+    assert(auditContents.find(wrongPassword) == std::string::npos);
+    assert(auditContents.find(newPassword) == std::string::npos);
+
+    std::filesystem::remove(userPath);
+    std::filesystem::remove(auditPath);
+}
+
 void testCryptoPBKDF2Verification() {
-    // Direct test of Crypto utility
+    // Verify against a known PBKDF2-HMAC-SHA256 test vector.
+    // Password: "password"
+    // Salt: "salt" (hex: 73616c74)
+    // Iterations: 1
+    // Derived key length: 32 bytes
+    const std::string knownVector = Crypto::hashPassword(
+        "password", "73616c74", 1);
+
+    assert(knownVector ==
+           "pbkdf2_sha256$1$73616c74$"
+           "120fb6cffcf8b32c43e7225256c4f837"
+           "a86548c92ccc35480805987cb70be17b");
+
+    assert(Crypto::verifyPassword("password", knownVector));
+    assert(!Crypto::verifyPassword("wrongpassword", knownVector));
     const std::string password = "TestPassword#2026";
+
+    // Generate two independent salts.
+    const std::string salt1 = Crypto::generateSaltHex();
+    const std::string salt2 = Crypto::generateSaltHex();
+
+    // A 16-byte salt must contain 32 hexadecimal characters.
+    assert(salt1.size() == 32);
+    assert(salt2.size() == 32);
+
+    // Every generated salt should be unique.
+    assert(salt1 != salt2);
+
+    // Hashing the same password twice must produce different hashes.
     const std::string hash1 = Crypto::hashPassword(password, "", 500);
     const std::string hash2 = Crypto::hashPassword(password, "", 500);
 
-    // Unique salts ensure different hashes for the same password
     assert(hash1 != hash2);
 
-    // Both hashes verify successfully with the correct password
+    // Verify that the stored format identifies PBKDF2-HMAC-SHA256.
+    assert(hash1.find("pbkdf2_sha256$") == 0);
+    assert(hash2.find("pbkdf2_sha256$") == 0);
+
+    // Extract the salt from each stored hash.
+    const std::size_t saltStart1 = hash1.find('$', hash1.find('$') + 1) + 1;
+    const std::size_t saltEnd1 = hash1.find('$', saltStart1);
+
+    const std::size_t saltStart2 = hash2.find('$', hash2.find('$') + 1) + 1;
+    const std::size_t saltEnd2 = hash2.find('$', saltStart2);
+
+    const std::string storedSalt1 =
+        hash1.substr(saltStart1, saltEnd1 - saltStart1);
+    const std::string storedSalt2 =
+        hash2.substr(saltStart2, saltEnd2 - saltStart2);
+
+    assert(storedSalt1.size() == 32);
+    assert(storedSalt2.size() == 32);
+    assert(storedSalt1 != storedSalt2);
+
+    // Both hashes verify successfully with the correct password.
     assert(Crypto::verifyPassword(password, hash1));
     assert(Crypto::verifyPassword(password, hash2));
 
-    // Wrong password fails verification
+    // Wrong password fails verification.
     assert(!Crypto::verifyPassword("WrongPassword", hash1));
     assert(!Crypto::verifyPassword("", hash1));
 
-    // Malformed hashes fail gracefully
+    // Malformed hashes fail gracefully.
     assert(!Crypto::verifyPassword(password, "invalid_format_string"));
     assert(!Crypto::verifyPassword(password, "sha256$100$salt$hash"));
 }
@@ -467,5 +578,6 @@ int main() {
     testAdminCanDeactivateAccount();
     testAdminCanResetPassword();
     testNonAdminCannotDeactivateOrResetPassword();
+    testPasswordsNeverAppearInAuditLogs();
     return 0;
 }

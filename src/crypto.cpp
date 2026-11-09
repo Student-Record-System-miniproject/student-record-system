@@ -4,12 +4,24 @@
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
-#include <random>
+#include <fstream>
+#include <limits>
+#include <stdexcept>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#endif
 #include <sstream>
 #include <vector>
 
 namespace srm {
 namespace {
+
+#ifndef _WIN32
 
 // Standard SHA-256 implementation conforming to FIPS 180-4 / RFC 6234
 class Sha256 {
@@ -183,27 +195,94 @@ std::array<uint8_t, 32> hmacSha256(const uint8_t* key, size_t keyLen,
     return output;
 }
 
+#endif
+
 // Standard PBKDF2 with HMAC-SHA256 conforming to RFC 2898 / RFC 8018
-std::array<uint8_t, 32> pbkdf2HmacSha256(const std::string& password,
-                                         const std::vector<uint8_t>& salt,
-                                         unsigned int iterations) {
-    // Generate block 1 (32 bytes derived key)
+
+std::array<uint8_t, 32> pbkdf2HmacSha256(
+    const std::string& password,
+    const std::vector<uint8_t>& salt,
+    unsigned int iterations) {
+
+    if (iterations == 0) {
+        throw std::invalid_argument("PBKDF2 iterations must be greater than zero.");
+    }
+
+    std::array<uint8_t, 32> result{};
+
+#ifdef _WIN32
+    // Use Windows CNG for native PBKDF2-HMAC-SHA256.
+    if (password.size() > std::numeric_limits<ULONG>::max() ||
+        salt.size() > std::numeric_limits<ULONG>::max()) {
+        throw std::length_error("Password or salt is too large.");
+    }
+
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+
+    NTSTATUS status = BCryptOpenAlgorithmProvider(
+        &algorithm,
+        BCRYPT_SHA256_ALGORITHM,
+        nullptr,
+        BCRYPT_ALG_HANDLE_HMAC_FLAG
+    );
+
+    if (status < 0) {
+        throw std::runtime_error(
+            "Failed to initialize Windows SHA-256 provider."
+        );
+    }
+
+    status = BCryptDeriveKeyPBKDF2(
+        algorithm,
+        reinterpret_cast<PUCHAR>(
+            const_cast<char*>(password.data())),
+        static_cast<ULONG>(password.size()),
+        reinterpret_cast<PUCHAR>(
+            const_cast<uint8_t*>(salt.data())),
+        static_cast<ULONG>(salt.size()),
+        static_cast<ULONGLONG>(iterations),
+        result.data(),
+        static_cast<ULONG>(result.size()),
+        0
+    );
+
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+
+    if (status < 0) {
+        throw std::runtime_error(
+            "Windows PBKDF2-HMAC-SHA256 derivation failed."
+        );
+    }
+
+#else
+    // Portable C++ PBKDF2-HMAC-SHA256 implementation.
     std::vector<uint8_t> saltAndIndex = salt;
     saltAndIndex.push_back(0);
     saltAndIndex.push_back(0);
     saltAndIndex.push_back(0);
-    saltAndIndex.push_back(1);  // block index = 1
+    saltAndIndex.push_back(1);
 
-    const auto* pwdBytes = reinterpret_cast<const uint8_t*>(password.data());
-    auto u = hmacSha256(pwdBytes, password.size(), saltAndIndex.data(), saltAndIndex.size());
-    auto result = u;
+    const auto* pwdBytes =
+        reinterpret_cast<const uint8_t*>(password.data());
+
+    auto u = hmacSha256(
+        pwdBytes, password.size(),
+        saltAndIndex.data(), saltAndIndex.size()
+    );
+
+    result = u;
 
     for (unsigned int iter = 1; iter < iterations; ++iter) {
-        u = hmacSha256(pwdBytes, password.size(), u.data(), u.size());
-        for (size_t b = 0; b < 32; ++b) {
+        u = hmacSha256(
+            pwdBytes, password.size(),
+            u.data(), u.size()
+        );
+
+        for (size_t b = 0; b < result.size(); ++b) {
             result[b] ^= u[b];
         }
     }
+#endif
 
     return result;
 }
@@ -232,11 +311,40 @@ std::vector<uint8_t> hexToBytes(const std::string& hex) {
 }  // namespace
 
 std::string Crypto::generateSaltHex(std::size_t lengthBytes) {
-    std::random_device rd;
-    std::vector<uint8_t> salt(lengthBytes);
-    for (size_t i = 0; i < lengthBytes; ++i) {
-        salt[i] = static_cast<uint8_t>(rd() & 0xFF);
+    if (lengthBytes == 0) {
+        throw std::invalid_argument("Salt length must be greater than zero.");
     }
+
+    std::vector<uint8_t> salt(lengthBytes);
+
+#ifdef _WIN32
+    if (lengthBytes > std::numeric_limits<ULONG>::max()) {
+        throw std::length_error("Salt length is too large.");
+    }
+
+    // Use the Windows system-preferred cryptographic random generator.
+    const NTSTATUS status = BCryptGenRandom(
+        nullptr,
+        salt.data(),
+        static_cast<ULONG>(salt.size()),
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG
+    );
+
+    if (status < 0) {
+        throw std::runtime_error("Failed to generate cryptographically secure salt.");
+    }
+#else
+    // Use the operating system's random source on Unix-like platforms.
+    std::ifstream randomSource("/dev/urandom", std::ios::binary);
+
+    if (!randomSource ||
+        !randomSource.read(
+            reinterpret_cast<char*>(salt.data()),
+            static_cast<std::streamsize>(salt.size()))) {
+        throw std::runtime_error("Failed to generate cryptographically secure salt.");
+    }
+#endif
+
     return bytesToHex(salt.data(), salt.size());
 }
 
