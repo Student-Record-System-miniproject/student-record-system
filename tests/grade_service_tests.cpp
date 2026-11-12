@@ -20,6 +20,8 @@ using srm::Session;
 
 const Session teacher{Role::Teacher, true, {}};
 const Session student{Role::Student, true, "S001"};
+const Session anotherStudent{Role::Student, true, "S002"};
+const Session unauthenticatedStudent{Role::Student, false, "S001"};
 
 GradeService serviceFor(const std::filesystem::path& path) {
     return GradeService(
@@ -267,6 +269,60 @@ void testMultipleSemesterCalculations() {
     std::filesystem::remove(path);
 }
 
+void testStudentCanViewOwnReportCard() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-own-report.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    assert(service.enterOrUpdateMarks(
+        teacher, "S001", "Mathematics", 1, "85").success);
+
+    const auto report = service.generateReportCard(student, "S001");
+
+    assert(report.success);
+    assert(report.report.find("S001") != std::string::npos);
+    assert(report.report.find("Marks 85") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+void testStudentCannotViewAnotherStudentsReportCard() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-other-student-report.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    const auto report = service.generateReportCard(
+        anotherStudent, "S001"
+    );
+
+    assert(!report.success);
+    assert(report.error == ErrorCode::AccessDenied);
+
+    std::filesystem::remove(path);
+}
+
+void testUnauthenticatedStudentCannotViewReportCard() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-unauthenticated-report.tsv";
+    std::filesystem::remove(path);
+
+    auto service = serviceFor(path);
+
+    const auto report = service.generateReportCard(
+        unauthenticatedStudent, "S001"
+    );
+
+    assert(!report.success);
+    assert(report.error == ErrorCode::AccessDenied);
+
+    std::filesystem::remove(path);
+}
+
+
 }  // namespace
 
 int main() {
@@ -279,5 +335,8 @@ int main() {
     testGradeBoundaries();
     testPercentageAndGPA();
     testMultipleSemesterCalculations();
+    testStudentCanViewOwnReportCard();
+    testStudentCannotViewAnotherStudentsReportCard();
+    testUnauthenticatedStudentCannotViewReportCard();
     return 0;
 }
