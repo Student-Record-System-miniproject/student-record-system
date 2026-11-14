@@ -12,6 +12,15 @@ void testValidText() {
     assert(InputValidator::validateText("Computer Science"));
     assert(InputValidator::validateText("alice@example.com"));
 }
+void testPasswordValidation() {
+    assert(InputValidator::validatePassword("abc12345"));
+    assert(InputValidator::validatePassword("A1bcdefg"));
+
+    assert(!InputValidator::validatePassword("abcdefgh"));
+    assert(!InputValidator::validatePassword("12345678"));
+    assert(!InputValidator::validatePassword("abc123"));
+    assert(!InputValidator::validatePassword(""));
+}
 
 void testEmptyTextRejected() {
     assert(!InputValidator::validateText(""));
@@ -118,6 +127,6 @@ int main() {
     testConfirmation();
     testDateOfBirthValidation();
     testContactNumberValidation();
-
+    testPasswordValidation();
     return 0;
 }

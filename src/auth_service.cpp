@@ -4,8 +4,6 @@
 #include "srm/input_validator.h"
 
 #include <chrono>
-#include <fstream>
-#include <sstream>
 #include <utility>
 
 namespace srm {
@@ -155,7 +153,9 @@ LoginResult createSuccessfulLogin(
 
 }  // namespace
 
-AuthService::AuthService(std::filesystem::path userFile, unsigned int hashIterations)
+AuthService::AuthService(
+    std::filesystem::path userFile,
+    unsigned int hashIterations)
     : repository_(std::move(userFile)),
       hashIterations_(hashIterations),
       storageReady_(repository_.load()) {}
@@ -164,59 +164,96 @@ bool AuthService::hasUsers() const {
     return !repository_.users().empty();
 }
 
-OperationResult AuthService::setupInitialAdmin(const std::string& username,
-                                              const std::string& password) {
+OperationResult AuthService::setupInitialAdmin(
+    const std::string& username,
+    const std::string& password) {
+
     if (!storageReady_) {
-        return {false, ErrorCode::StorageFailure, "User storage is not ready."};
+        return {false, ErrorCode::StorageFailure,
+                "User storage is not ready."};
     }
-    if (!InputValidator::validateText(username) || !InputValidator::validateText(password)) {
-        return {false, ErrorCode::InvalidInput, "Username and password must be non-empty and valid."};
+
+    if (!InputValidator::validateText(username) ||
+        !InputValidator::validateText(password)) {
+        return {false, ErrorCode::InvalidInput,
+                "Username and password must be non-empty and valid."};
     }
+
     if (!repository_.users().empty()) {
         return {false, ErrorCode::AccessDenied,
                 "Initial administrator setup is disabled because accounts already exist."};
     }
-    std::string hashedPassword = Crypto::hashPassword(password, "", hashIterations_);
-    UserAccount adminUser{username, std::move(hashedPassword), Role::Administrator, 0, false, ""};
+
+    std::string hashedPassword =
+        Crypto::hashPassword(password, "", hashIterations_);
+
+    UserAccount adminUser{
+        username, std::move(hashedPassword),
+        Role::Administrator, 0, false, ""
+    };
+
     if (!repository_.addUser(std::move(adminUser))) {
-        return {false, ErrorCode::StorageFailure, "Failed to persist initial administrator account."};
+        return {false, ErrorCode::StorageFailure,
+                "Failed to persist initial administrator account."};
     }
-    return {true, ErrorCode::None, "Initial administrator created successfully."};
+
+    return {true, ErrorCode::None,
+            "Initial administrator created successfully."};
 }
 
-OperationResult AuthService::registerUser(const Session& adminSession,
-                                          const std::string& username,
-                                          const std::string& password,
-                                          Role role,
-                                          const std::string& studentRollNumber) {
-    const auto auth = AccessController::authorize(adminSession, Operation::RegisterUser);
+OperationResult AuthService::registerUser(
+    const Session& adminSession,
+    const std::string& username,
+    const std::string& password,
+    Role role,
+    const std::string& studentRollNumber) {
+
+    const auto auth =
+        AccessController::authorize(adminSession, Operation::RegisterUser);
+
     if (!auth.success) {
         return auth;
     }
+
     if (!storageReady_) {
-        return {false, ErrorCode::StorageFailure, "User storage is not ready."};
+        return {false, ErrorCode::StorageFailure,
+                "User storage is not ready."};
     }
+
     if (!InputValidator::validateText(username) ||
         !InputValidator::validateText(password) ||
         (!studentRollNumber.empty() &&
          !InputValidator::validateText(studentRollNumber))) {
         return {false, ErrorCode::InvalidInput,
                 "Username, password, or student roll number contains invalid input."};
+    }
 
-}
     if (repository_.findUser(username) != nullptr) {
-        return {false, ErrorCode::DuplicateRecord, "User with this username already exists."};
+        return {false, ErrorCode::DuplicateRecord,
+                "User with this username already exists."};
     }
-    std::string hashedPassword = Crypto::hashPassword(password, "", hashIterations_);
-    UserAccount user{username, std::move(hashedPassword), role, 0, false, studentRollNumber};
+
+    std::string hashedPassword =
+        Crypto::hashPassword(password, "", hashIterations_);
+
+    UserAccount user{
+        username, std::move(hashedPassword),
+        role, 0, false, studentRollNumber
+    };
+
     if (!repository_.addUser(std::move(user))) {
-        return {false, ErrorCode::StorageFailure, "Failed to persist user to storage."};
+        return {false, ErrorCode::StorageFailure,
+                "Failed to persist user to storage."};
     }
+
     if (auditService_) {
-        auditService_->logOperation(adminSession, "REGISTER_USER", username, true,
-                                    "Registered new " + roleToString(role) + " account");
+        auditService_->logOperation(
+            adminSession, "REGISTER_USER", username, true,
+            "Registered new " + roleToString(role) + " account");
     }
-    return {true, ErrorCode::None, "User registered successfully."};
+
+    return {true, ErrorCode::None,
+            "User registered successfully."};
 }
 
 LoginResult AuthService::login(
@@ -261,26 +298,32 @@ LoginResult AuthService::login(
     return createSuccessfulLogin(*user, auditService_);
 }
 
-OperationResult AuthService::unlockAccount(const Session& adminSession,
-                                           const std::string& username) {
-    // SRM-SR-003: Only an Administrator can unlock the account
-    const auto auth = AccessController::authorize(adminSession, Operation::UnlockAccount);
+OperationResult AuthService::unlockAccount(
+    const Session& adminSession,
+    const std::string& username) {
+
+    const auto auth =
+        AccessController::authorize(adminSession, Operation::UnlockAccount);
+
     if (!auth.success) {
         return auth;
     }
+
     if (!storageReady_) {
-        return {false, ErrorCode::StorageFailure, "User storage is not ready."};
+        return {false, ErrorCode::StorageFailure,
+                "User storage is not ready."};
     }
 
-    // Validate username before searching for the account.
     if (!InputValidator::validateText(username)) {
         return {false, ErrorCode::InvalidInput,
                 "Username contains invalid input."};
     }
 
     UserAccount* user = repository_.findUser(username);
+
     if (user == nullptr) {
-        return {false, ErrorCode::StudentNotFound, "User account not found."};
+        return {false, ErrorCode::StudentNotFound,
+                "User account not found."};
     }
 
     bool prevLocked = user->isLocked;
@@ -288,45 +331,54 @@ OperationResult AuthService::unlockAccount(const Session& adminSession,
 
     user->isLocked = false;
     user->failedAttempts = 0;
+
     if (!repository_.save()) {
         user->isLocked = prevLocked;
         user->failedAttempts = prevFailed;
-        return {false, ErrorCode::StorageFailure, "Failed to save unlocked user state."};
+
+        return {false, ErrorCode::StorageFailure,
+                "Failed to save unlocked user state."};
     }
 
     if (auditService_) {
-        auditService_->logOperation(adminSession, "ACCOUNT_UNLOCKED", username, true,
-                                    "Administrator unlocked user account");
+        auditService_->logOperation(
+            adminSession, "ACCOUNT_UNLOCKED", username, true,
+            "Administrator unlocked user account");
     }
 
-    return {true, ErrorCode::None, "Account unlocked successfully."};
+    return {true, ErrorCode::None,
+            "Account unlocked successfully."};
 }
 
-OperationResult AuthService::deactivateAccount(const Session& adminSession,
-                                                const std::string& username) {
-    // Only an Administrator can deactivate a user account.
-    const auto auth = AccessController::authorize(adminSession, Operation::ManageUsers);
+OperationResult AuthService::deactivateAccount(
+    const Session& adminSession,
+    const std::string& username) {
+
+    const auto auth = AccessController::authorize(
+        adminSession, Operation::ManageUsers);
+
     if (!auth.success) {
         return auth;
     }
 
     if (!storageReady_) {
-        return {false, ErrorCode::StorageFailure, "User storage is not ready."};
+        return {false, ErrorCode::StorageFailure,
+                "User storage is not ready."};
     }
 
-    // Validate username before searching for the account.
     if (!InputValidator::validateText(username)) {
         return {false, ErrorCode::InvalidInput,
                 "Username contains invalid input."};
     }
 
     UserAccount* user = repository_.findUser(username);
+
     if (user == nullptr) {
-        return {false, ErrorCode::StudentNotFound, "User account not found."};
+        return {false, ErrorCode::StudentNotFound,
+                "User account not found."};
     }
 
     bool previousActive = user->isActive;
-
     user->isActive = false;
 
     if (!repository_.save()) {
@@ -336,27 +388,32 @@ OperationResult AuthService::deactivateAccount(const Session& adminSession,
     }
 
     if (auditService_) {
-        auditService_->logOperation(adminSession, "ACCOUNT_DEACTIVATED", username, true,
-                                    "Administrator deactivated user account");
+        auditService_->logOperation(
+            adminSession, "ACCOUNT_DEACTIVATED", username, true,
+            "Administrator deactivated user account");
     }
 
-    return {true, ErrorCode::None, "Account deactivated successfully."};
+    return {true, ErrorCode::None,
+            "Account deactivated successfully."};
 }
 
-OperationResult AuthService::resetPassword(const Session& adminSession,
-                                            const std::string& username,
-                                            const std::string& newPassword) {
-    // Only an Administrator can reset a user's password.
-    const auto auth = AccessController::authorize(adminSession, Operation::ManageUsers);
+OperationResult AuthService::resetPassword(
+    const Session& adminSession,
+    const std::string& username,
+    const std::string& newPassword) {
+
+    const auto auth = AccessController::authorize(
+        adminSession, Operation::ManageUsers);
+
     if (!auth.success) {
         return auth;
     }
 
     if (!storageReady_) {
-        return {false, ErrorCode::StorageFailure, "User storage is not ready."};
+        return {false, ErrorCode::StorageFailure,
+                "User storage is not ready."};
     }
 
-    // Validate username and new password.
     if (!InputValidator::validateText(username) ||
         !InputValidator::validateText(newPassword)) {
         return {false, ErrorCode::InvalidInput,
@@ -364,14 +421,15 @@ OperationResult AuthService::resetPassword(const Session& adminSession,
     }
 
     UserAccount* user = repository_.findUser(username);
+
     if (user == nullptr) {
-        return {false, ErrorCode::StudentNotFound, "User account not found."};
+        return {false, ErrorCode::StudentNotFound,
+                "User account not found."};
     }
 
-    // Save the old password hash in case persistence fails.
     std::string previousPasswordHash = user->passwordHash;
-
-    user->passwordHash = Crypto::hashPassword(newPassword, "", hashIterations_);
+    user->passwordHash =
+        Crypto::hashPassword(newPassword, "", hashIterations_);
 
     if (!repository_.save()) {
         user->passwordHash = previousPasswordHash;
@@ -380,25 +438,104 @@ OperationResult AuthService::resetPassword(const Session& adminSession,
     }
 
     if (auditService_) {
-        auditService_->logOperation(adminSession, "PASSWORD_RESET", username, true,
-                                    "Administrator reset user password");
+        auditService_->logOperation(
+            adminSession, "PASSWORD_RESET", username, true,
+            "Administrator reset user password");
     }
 
-    return {true, ErrorCode::None, "Password reset successfully."};
+    return {true, ErrorCode::None,
+            "Password reset successfully."};
 }
 
-bool AuthService::isAccountLocked(const std::string& username) const {
+bool AuthService::validateNewPassword(
+    const std::string& password) const {
+
+    return InputValidator::validatePassword(password);
+}
+
+OperationResult AuthService::persistPasswordChange(
+    UserAccount& user,
+    const std::string& newPassword) {
+
+    const std::string previousHash = user.passwordHash;
+
+    user.passwordHash = Crypto::hashPassword(
+        newPassword, "", hashIterations_);
+
+    if (!repository_.save()) {
+        user.passwordHash = previousHash;
+
+        return {false, ErrorCode::StorageFailure,
+                "Failed to save the new password."};
+    }
+
+    return {true, ErrorCode::None,
+            "Password changed successfully."};
+}
+
+OperationResult AuthService::changePassword(
+    const Session& session,
+    const std::string& newPassword) {
+
+    const auto auth = AccessController::authorize(
+        session, Operation::ChangeOwnPassword);
+
+    if (!auth.success) {
+        return auth;
+    }
+
+    if (!storageReady_) {
+        return {false, ErrorCode::StorageFailure,
+                "User storage is not ready."};
+    }
+
+    if (!validateNewPassword(newPassword)) {
+        return {false, ErrorCode::InvalidInput,
+                "Password must contain at least 8 characters, "
+                "at least one letter, and at least one digit."};
+    }
+
+    UserAccount* user = repository_.findUser(session.username);
+
+    if (user == nullptr) {
+        return {false, ErrorCode::InvalidCredentials,
+                "Authenticated user account not found."};
+    }
+
+    const auto result = persistPasswordChange(*user, newPassword);
+
+    if (!result.success) {
+        return result;
+    }
+
+    if (auditService_) {
+        auditService_->logOperation(
+            session, "PASSWORD_CHANGED", session.username, true,
+            "User changed their own password");
+    }
+
+    return result;
+}
+
+bool AuthService::isAccountLocked(
+    const std::string& username) const {
+
     const auto* user = repository_.findUser(username);
     return user != nullptr && user->isLocked;
 }
 
-int AuthService::getFailedAttempts(const std::string& username) const {
+int AuthService::getFailedAttempts(
+    const std::string& username) const {
+
     const auto* user = repository_.findUser(username);
     return user ? user->failedAttempts : 0;
 }
 
-void AuthService::setAuditService(AuditService* service, bool requireAudit) {
-    auditService_ = service;
+void AuthService::setAuditService(
+    AuditService* auditService,
+    bool requireAudit) {
+
+    auditService_ = auditService;
     requireAudit_ = requireAudit;
 }
 
