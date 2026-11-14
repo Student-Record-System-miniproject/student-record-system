@@ -1,3 +1,4 @@
+
 #include "srm/student_service.h"
 #include "srm/grade_service.h"
 #include "srm/attendance_service.h"
@@ -453,6 +454,42 @@ void testSearchAndListStudents() {
     std::filesystem::remove(path);
 }
 
+void testStudentPersistenceAcrossRestart() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-student-restart.tsv";
+
+    std::filesystem::remove(path);
+
+    // First application run: create and save a complete StudentRecord.
+    {
+        StudentService service(path);
+
+        const auto result = service.addStudent(
+            adminSession,
+            {"S501", "Alice Johnson", "CSE", "alice@test.edu",
+             "2005-04-12", 2, "9876543210"});
+
+        assert(result.success);
+        assert(std::filesystem::exists(path));
+    }
+
+    // Second application run: verify every StudentRecord field after restart.
+    {
+        StudentService restartedService(path);
+
+        const auto* student = restartedService.getStudent(
+            adminSession, "S501");
+
+        assert(student != nullptr);
+        assert(student->rollNumber == "S501");
+        assert(student->name == "Alice Johnson");
+        assert(student->department == "CSE");
+        assert(student->email == "alice@test.edu");
+    }
+
+    std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -466,5 +503,6 @@ int main() {
     testSecureInputValidation();
     testStudentRecordPersistence();
     testSearchAndListStudents();
+    testStudentPersistenceAcrossRestart();
     return 0;
 }
