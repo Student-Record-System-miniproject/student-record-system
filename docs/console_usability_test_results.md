@@ -1,39 +1,31 @@
-# SRM-NF-004: Console Usability Test Report
-
-## Test Reference
+SRM-NF-004: Console Usability Test Report
+Test Reference
 TC-Use-01
-
-## Objective
-Verify that common console tasks can be completed using on-screen menus and that errors explain the cause and corrective action.
-
-## Manual Test Results
-
-| Test | Expected Result | Actual Result | Status |
-|---|---|---|---|
-| Initial administrator setup | First admin account can be created | Account created successfully | PASS |
-| Administrator login | Valid credentials allow login | Login successful | PASS |
-| View student records | Student records are displayed | Empty-state message displayed with guidance | PASS |
-| Invalid numeric choice (9) | Explain valid menu range | Range 1-3 displayed | PASS |
-| Non-numeric choice (abc) | Explain required input | Whole-number guidance displayed | PASS |
-| Logout (3) | Return to login | Logout successful | PASS |
-| Exit (0) | Close application | Application exited successfully | PASS |
-| Login retry | Allow retry after invalid credentials | Retry prompt displayed | PASS |
-
-## Automated Test Results
-
+Objective
+Verify that the console menus are understandable, role-specific, and support login, navigation, and logout without unexpectedly terminating the application.
+Automated Test Results
 Command:
-`ctest --test-dir build -C Debug --output-on-failure`
+ctest --test-dir build -C Debug --output-on-failure
+Result: 9/9 automated tests passed.
+Manual Test Results
+Test	Expected Result	Observed Result	Status
+Initial administrator setup	First administrator account can be created	Account creation completed successfully	PASS
+Administrator login	Valid credentials allow login	Administrator menu displayed	PASS
+Add student	Valid student details are accepted	Student record creation was completed after correcting the contact number to 10 digits	PASS
+Create teacher account	Administrator can create a teacher account	Teacher account was created	PASS
+Teacher login	Valid teacher credentials allow login	Teacher menu displayed	PASS
+Create student account	Administrator can create a student account linked to a student roll number	Student account was created and linked to roll number 213	PASS
+Student login	Valid student credentials allow login	Student menu displayed	PASS
+Student logout	Logout returns the user to the login flow	Login prompt was displayed again	PASS
+Teacher logout	Logout returns the user to the login flow	Login prompt was displayed again	PASS
 
-Result: 9/9 tests passed.
 
-## Observations and Limitations
-
-- The user database was initially empty. Initial administrator setup was verified.
-- The student database was empty, so the empty-record response was tested.
-- Administrator console flows were manually tested.
-- Teacher and Student role menus were not manually tested.
-- The three-minute completion target was not independently timed.
-
-## Conclusion
-
-The tested Administrator console flows provide clear prompts, actionable input-error messages, login retry, logout, and application exit. Automated regression tests passed.
+Observations and Limitations
+- The initial data files were empty when testing began.
+- A student contact number must contain exactly 10 digits; the first add attempt was rejected with a validation message, and the record was subsequently created with a valid number.
+- The student test account was linked to roll number 213.
+- Teacher and Student login/menu/logout flows were manually exercised.
+- Detailed functional verification of every report, attendance, and marks operation was not recorded as part of this test run.
+- The marks-entry flow requires a configured subject catalogue; the current project does not provide one. The application therefore reports that marks entry is unavailable rather than accepting an unverified subject.
+Conclusion
+The application builds successfully, all 9 automated tests pass, and the manually exercised Administrator, Teacher, and Student account flows support account creation, login, role-specific menu display, and logout. Further manual verification is still needed for individual report and attendance actions, and marks entry remains dependent on a subject catalogue.
