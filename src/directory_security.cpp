@@ -1,3 +1,4 @@
+
 #include "srm/directory_security.h"
 
 #include <filesystem>
@@ -21,8 +22,9 @@ namespace {
 
 #ifdef _WIN32
 
-bool applyWindowsProtection(const std::filesystem::path& path) {
+bool getCurrentUserSidString(std::wstring& sidString) {
     HANDLE token = nullptr;
+
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
         return false;
     }
@@ -54,18 +56,35 @@ bool applyWindowsProtection(const std::filesystem::path& path) {
         return false;
     }
 
+    sidString = userSidString;
+    LocalFree(userSidString);
+
+    return true;
+}
+
+bool createProtectionSecurityDescriptor(
+    PSECURITY_DESCRIPTOR* descriptor) {
+
+    std::wstring userSidString;
+
+    if (!getCurrentUserSidString(userSidString)) {
+        return false;
+    }
+
     // Allow only the current user, SYSTEM and local Administrators.
     // OI/CI propagate permissions to child files and directories.
     const std::wstring sddl =
-        L"D:P(A;OICI;FA;;;" + std::wstring(userSidString) +
+        L"D:P(A;OICI;FA;;;" + userSidString +
         L")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
-    LocalFree(userSidString);
+    return ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        sddl.c_str(), SDDL_REVISION_1, descriptor, nullptr) != FALSE;
+}
 
+bool applyWindowsProtection(const std::filesystem::path& path) {
     PSECURITY_DESCRIPTOR descriptor = nullptr;
 
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) {
+    if (!createProtectionSecurityDescriptor(&descriptor)) {
         return false;
     }
 

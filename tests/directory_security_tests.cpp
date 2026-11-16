@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <iterator>
+#include <system_error>
+#include <cstring>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -15,6 +18,11 @@
 #include <windows.h>
 #include <aclapi.h>
 #include <sddl.h>
+
+#ifndef SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+#define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
+#endif
+
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -33,6 +41,78 @@ bool check(bool condition, const std::string& message) {
     std::cout << "PASSED: " << message << '\n';
     return true;
 }
+
+bool createTestDirectorySymlink(
+    const fs::path& target,
+    const fs::path& link,
+    std::error_code& ec) {
+
+#ifdef _WIN32
+    const DWORD flags =
+        SYMBOLIC_LINK_FLAG_DIRECTORY |
+        SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+
+    if (CreateSymbolicLinkW(link.c_str(), target.c_str(), flags)) {
+        ec.clear();
+        return true;
+    }
+
+    ec = std::error_code(
+        static_cast<int>(GetLastError()),
+        std::system_category());
+
+    return false;
+#else
+    fs::create_directory_symlink(target, link, ec);
+    return !ec;
+#endif
+}
+
+#ifdef _WIN32
+
+bool getDaclSnapshot(
+    const fs::path& path,
+    std::vector<unsigned char>& snapshot) {
+
+    PACL dacl = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+
+    const DWORD result = GetNamedSecurityInfoW(
+        const_cast<LPWSTR>(path.c_str()),
+        SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION,
+        nullptr,
+        nullptr,
+        &dacl,
+        nullptr,
+        &descriptor);
+
+    if (result != ERROR_SUCCESS || descriptor == nullptr || dacl == nullptr) {
+        if (descriptor) {
+            LocalFree(descriptor);
+        }
+        return false;
+    }
+
+    ACL_SIZE_INFORMATION aclInfo{};
+
+    const bool valid = GetAclInformation(
+        dacl,
+        &aclInfo,
+        sizeof(aclInfo),
+        AclSizeInformation) != FALSE;
+
+    if (valid) {
+        snapshot.resize(aclInfo.AclBytesInUse);
+        std::memcpy(snapshot.data(), dacl, aclInfo.AclBytesInUse);
+    }
+
+    LocalFree(descriptor);
+
+    return valid;
+}
+
+#endif
 
 #ifndef _WIN32
 
@@ -95,6 +175,7 @@ bool hasProtectedAllowedPrincipals(const fs::path& path) {
     }
 
     PSID currentUser = nullptr;
+
     if (valid) {
         currentUser = reinterpret_cast<TOKEN_USER*>(
             tokenBuffer.data())->User.Sid;
@@ -235,6 +316,10 @@ int main(int argc, char* argv[]) {
         "Existing data file has a protected ACL");
 
     passed &= check(
+        hasProtectedAllowedPrincipals(nestedDir),
+        "Nested data directory has a protected ACL");
+
+    passed &= check(
         hasProtectedAllowedPrincipals(nestedFile),
         "Nested data file has a protected ACL");
 
@@ -260,6 +345,91 @@ int main(int argc, char* argv[]) {
     passed &= check(hasExactPermissions(backupFile, 0600),
                     "Existing backup file permissions are 0600");
 #endif
+
+    // Verify that symbolic links are rejected without modifying their targets.
+    const fs::path symlinkTarget = root / "symlink_target";
+    const fs::path symlinkDirectory = root / "symlink_test";
+    const fs::path targetFile = symlinkTarget / "important.txt";
+    const fs::path linkedDirectory = symlinkDirectory / "linked_directory";
+
+    fs::create_directories(symlinkTarget);
+    fs::create_directories(symlinkDirectory);
+
+    {
+        std::ofstream(targetFile) << "original target data";
+    }
+
+#ifndef _WIN32
+    struct stat targetInfoBefore {};
+    const bool targetStatSucceeded =
+        ::stat(targetFile.c_str(), &targetInfoBefore) == 0;
+#else
+    std::vector<unsigned char> targetDaclBefore;
+    const bool targetDaclCaptured =
+        getDaclSnapshot(targetFile, targetDaclBefore);
+#endif
+
+    std::error_code symlinkError;
+
+    if (!createTestDirectorySymlink(
+            symlinkTarget, linkedDirectory, symlinkError)) {
+
+#ifdef _WIN32
+        if (symlinkError.value() == ERROR_PRIVILEGE_NOT_HELD) {
+            std::cout
+                << "SKIPPED: Windows does not grant this process "
+                   "permission to create symbolic links.\n";
+        } else {
+            passed &= check(
+                false,
+                "Could not create symbolic link: " +
+                    symlinkError.message());
+        }
+#else
+        passed &= check(
+            false,
+            "Could not create symbolic link: " +
+                symlinkError.message());
+#endif
+
+    } else {
+        passed &= check(
+            !srm::DirectorySecurity::protectDirectory(symlinkDirectory),
+            "Symbolic links inside protected directories are rejected");
+
+        std::ifstream targetInput(targetFile);
+        std::string targetContents(
+            (std::istreambuf_iterator<char>(targetInput)),
+            std::istreambuf_iterator<char>());
+
+        passed &= check(
+            targetContents == "original target data",
+            "Symbolic link target contents remain unchanged");
+
+#ifndef _WIN32
+        struct stat targetInfoAfter {};
+
+        const bool targetPermissionsUnchanged =
+            targetStatSucceeded &&
+            ::stat(targetFile.c_str(), &targetInfoAfter) == 0 &&
+            (targetInfoBefore.st_mode & 0777) ==
+                (targetInfoAfter.st_mode & 0777);
+
+        passed &= check(
+            targetPermissionsUnchanged,
+            "Symbolic link target permissions remain unchanged");
+#else
+        std::vector<unsigned char> targetDaclAfter;
+        const bool targetDaclUnchanged =
+            targetDaclCaptured &&
+            getDaclSnapshot(targetFile, targetDaclAfter) &&
+            targetDaclBefore == targetDaclAfter;
+
+        passed &= check(
+            targetDaclUnchanged,
+            "Symbolic link target ACL remains unchanged");
+#endif
+    }
 
     fs::remove_all(root, ec);
 

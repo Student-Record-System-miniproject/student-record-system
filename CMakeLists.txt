@@ -88,7 +88,7 @@ add_executable(directory_security_tests
 target_link_libraries(directory_security_tests PRIVATE srm_core)
 
 if (WIN32)
-    target_link_libraries(directory_security_tests PRIVATE advapi32)
+    target_link_libraries(srm_core PUBLIC advapi32)
 endif()
 
 enable_testing()
