@@ -1,5 +1,3 @@
-
-
 #pragma once
 
 #include "srm/common_types.h"
@@ -63,6 +61,9 @@ private:
     bool validateBackup(
         const std::filesystem::path& backupPath) const;
 
+    bool isIncompleteBackup(
+        const std::filesystem::path& backupPath) const;
+
     bool copyFile(
         const std::filesystem::path& source,
         const std::filesystem::path& destination,
@@ -94,6 +95,15 @@ private:
     bool rollbackRestore(
         const std::filesystem::path& rollbackPath,
         std::error_code& error) const;
+
+    bool applyRestore(
+        const std::filesystem::path& backupPath,
+        std::error_code& error) const;
+
+    OperationResult handleRestoreFailure(
+        const Session& session,
+        const std::string& backupName,
+        const std::filesystem::path& rollbackPath);
 };
 
 }  // namespace srm

@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 
 #include "srm/backup_service.h"
 #include "srm/common_types.h"
@@ -156,6 +159,29 @@ void testBackupNamesAreValidated() {
 
     // A genuine backup name remains valid.
     assert(service.restoreBackup(admin, validName, "Y").success);
+
+    fs::remove_all(root);
+}
+
+void testIncompleteBackupIsNotListed() {
+    const fs::path root = createTestRoot("incomplete_backup");
+    const fs::path dataDir = root / "data";
+    const fs::path backupDir = root / "backups";
+
+    const std::string backupName =
+        "backup_20261116_123456_123456";
+
+    const fs::path incompletePath = backupDir / backupName;
+
+    fs::create_directories(incompletePath);
+
+    writeFile(incompletePath / "students.txt", "STUDENT_DATA");
+    writeFile(incompletePath / ".backup_incomplete",
+              "Backup creation in progress");
+
+    srm::BackupService service(dataDir, backupDir);
+
+    assert(service.listBackups().empty());
 
     fs::remove_all(root);
 }
@@ -360,6 +386,7 @@ void testRollbackDataIsRetainedWhenRecoveryFails() {
 int main() {
     testBackupCreationAndRestore();
     testBackupNamesAreValidated();
+    testIncompleteBackupIsNotListed();
     testBackupNamesAreUnique();
     testRollbackRestoresOriginalDataAfterFailure();
     testRollbackDataIsRetainedWhenRecoveryFails();

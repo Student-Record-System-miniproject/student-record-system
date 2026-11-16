@@ -175,6 +175,10 @@ std::vector<std::filesystem::path> BackupService::listBackups() const {
 
 bool BackupService::validateBackup(
     const std::filesystem::path& backupPath) const {
+
+    if (isIncompleteBackup(backupPath)) {
+        return false;
+    }
     std::error_code error;
 
     if (!std::filesystem::is_directory(backupPath, error) || error) {
@@ -197,6 +201,16 @@ bool BackupService::validateBackup(
     }
 
     return containsAtLeastOneFile;
+}
+
+bool BackupService::isIncompleteBackup(
+    const std::filesystem::path& backupPath) const {
+    std::error_code error;
+
+    const bool markerExists = std::filesystem::exists(
+        backupPath / ".backup_incomplete", error);
+
+    return error || markerExists;
 }
 
 bool BackupService::copyFile(
@@ -277,8 +291,39 @@ OperationResult BackupService::createBackup(const Session& session) {
                 "Could not create a unique backup folder."};
     }
 
+    // Mark the backup as incomplete until every file is copied.
+    const auto markerPath = backupPath / ".backup_incomplete";
+
+    {
+        std::ofstream marker(markerPath, std::ios::out | std::ios::trunc);
+
+        if (!marker.is_open()) {
+            std::error_code cleanupError;
+            removeBackupDirectory(backupPath, cleanupError);
+
+            return {false, ErrorCode::StorageFailure,
+                    "Could not initialize backup. Backup was not completed."};
+        }
+
+        marker << "Backup creation in progress";
+
+        if (!marker.good()) {
+            marker.close();
+
+            std::error_code cleanupError;
+            removeBackupDirectory(backupPath, cleanupError);
+
+            return {false, ErrorCode::StorageFailure,
+                    "Could not initialize backup. Backup was not completed."};
+        }
+    }
+
     bool success =
         copyRegularFiles(dataDirectory_, backupPath, false, error);
+
+    if (success) {
+        success = std::filesystem::remove(markerPath, error) && !error;
+    }
 
     if (success) {
         success = validateBackup(backupPath);
@@ -382,8 +427,10 @@ bool BackupService::restoreFiles(
 bool BackupService::rollbackRestore(
     const std::filesystem::path& rollbackPath,
     std::error_code& error) const {
+
     for (const auto& entry :
          std::filesystem::directory_iterator(dataDirectory_, error)) {
+
         if (error) {
             return false;
         }
@@ -408,11 +455,59 @@ bool BackupService::rollbackRestore(
         rollbackPath, dataDirectory_, true, error);
 }
 
+bool BackupService::applyRestore(
+    const std::filesystem::path& backupPath,
+    std::error_code& error) const {
+
+    if (!removeObsoleteFiles(backupPath, error)) {
+        return false;
+    }
+
+    return restoreFiles(backupPath, error);
+}
+
+OperationResult BackupService::handleRestoreFailure(
+    const Session& session,
+    const std::string& backupName,
+    const std::filesystem::path& rollbackPath) {
+
+    std::error_code rollbackError;
+
+    const bool rollbackSucceeded =
+        rollbackRestore(rollbackPath, rollbackError);
+
+    if (rollbackSucceeded) {
+        std::error_code cleanupError;
+        removeBackupDirectory(rollbackPath, cleanupError);
+    }
+
+    if (auditService_) {
+        auditService_->logRestore(
+            session,
+            backupName,
+            false,
+            rollbackSucceeded
+                ? "Restore failed; original data was recovered."
+                : "Restore and rollback failed; recovery data retained.");
+    }
+
+    return {
+        false,
+        ErrorCode::StorageFailure,
+        rollbackSucceeded
+            ? "Restore failed. Original data was recovered."
+            : "Restore failed and rollback was unsuccessful. "
+              "Rollback data has been retained for recovery."
+    };
+}
+
 OperationResult BackupService::restoreBackup(
     const Session& session,
     const std::string& backupName,
     const std::string& confirmation) {
-    if (!AccessController::isAuthorized(session, Operation::RestoreData)) {
+
+    if (!AccessController::isAuthorized(
+            session, Operation::RestoreData)) {
         return {false, ErrorCode::AccessDenied,
                 "Only administrators can restore backups."};
     }
@@ -424,12 +519,8 @@ OperationResult BackupService::restoreBackup(
 
     std::filesystem::path backupPath;
 
-    if (!resolveBackupPath(backupName, backupPath)) {
-        return {false, ErrorCode::InvalidInput,
-                "Invalid backup name or backup path."};
-    }
-
-    if (!validateBackup(backupPath)) {
+    if (!resolveBackupPath(backupName, backupPath) ||
+        !validateBackup(backupPath)) {
         return {false, ErrorCode::InvalidInput,
                 "The selected backup is missing or invalid."};
     }
@@ -449,35 +540,9 @@ OperationResult BackupService::restoreBackup(
                 "Could not prepare restore rollback."};
     }
 
-    bool success = removeObsoleteFiles(backupPath, error);
-
-    if (success) {
-        success = restoreFiles(backupPath, error);
-    }
-
-    if (!success) {
-        std::error_code rollbackError;
-        const bool rollbackSucceeded =
-            rollbackRestore(rollbackPath, rollbackError);
-
-        if (rollbackSucceeded) {
-            std::error_code cleanupError;
-            removeBackupDirectory(rollbackPath, cleanupError);
-        }
-
-        if (auditService_) {
-            auditService_->logRestore(
-                session, backupName, false,
-                rollbackSucceeded
-                    ? "Restore failed; original data was recovered."
-                    : "Restore and rollback failed; recovery data retained.");
-        }
-
-        return {false, ErrorCode::StorageFailure,
-                rollbackSucceeded
-                    ? "Restore failed. Original data was recovered."
-                    : "Restore failed and rollback was unsuccessful. "
-                      "Rollback data has been retained for recovery."};
+    if (!applyRestore(backupPath, error)) {
+        return handleRestoreFailure(
+            session, backupName, rollbackPath);
     }
 
     std::error_code cleanupError;
@@ -485,7 +550,10 @@ OperationResult BackupService::restoreBackup(
 
     if (auditService_) {
         auditService_->logRestore(
-            session, backupName, true, "Data restored successfully.");
+            session,
+            backupName,
+            true,
+            "Data restored successfully.");
     }
 
     return {true, ErrorCode::None,
