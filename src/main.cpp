@@ -6,6 +6,7 @@
 #include "srm/rbac.h"
 #include "srm/student_service.h"
 #include "srm/attendance_service.h"
+#include "srm/directory_security.h"
 
 #include <chrono>
 #include <cstddef>
@@ -568,6 +569,14 @@ bool runAuthenticatedSession(
 }
 
 int main() {
+    // SRM-SR-006: Protect data and backup directories before accessing files.
+    if (!srm::DirectorySecurity::protectApplicationDirectories(
+            "data", "backups")) {
+        std::cerr << "SECURITY ERROR: Unable to protect application data "
+                     "and backup directories.\n";
+        return 1;
+    }
+
     srm::AuditService auditService("data/audit.log");
 
     srm::BackupService backupService(
