@@ -21,6 +21,7 @@ add_library(srm_core
     src/auth_service.cpp
     src/user_repository.cpp
     src/input_validator.cpp
+    src/backup_service.cpp
 )
 
 add_library(srm_grade ALIAS srm_core)
@@ -85,16 +86,18 @@ add_executable(crash_safe_saving_tests
 )
 target_link_libraries(crash_safe_saving_tests PRIVATE srm_core)
 
+add_executable(backup_service_tests
+    tests/backup_service_tests.cpp
+)
+target_link_libraries(backup_service_tests PRIVATE srm_core)
 add_executable(input_validator_tests
     tests/input_validator_tests.cpp
 )
 target_link_libraries(input_validator_tests PRIVATE srm_core)
-
 add_executable(performance_capacity_tests
     tests/performance_capacity_tests.cpp
 )
 target_link_libraries(performance_capacity_tests PRIVATE srm_core)
-
 enable_testing()
 
 add_test(NAME grade_service_tests COMMAND grade_service_tests)
@@ -106,3 +109,5 @@ add_test(NAME auth_service_tests COMMAND auth_service_tests)
 add_test(NAME audit_service_tests COMMAND audit_service_tests)
 add_test(NAME crash_safe_saving_tests COMMAND crash_safe_saving_tests)
 add_test(NAME input_validator_tests COMMAND input_validator_tests)
+add_test(NAME backup_service_tests COMMAND backup_service_tests)
+add_test(NAME performance_capacity_tests COMMAND performance_capacity_tests)

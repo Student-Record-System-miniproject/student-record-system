@@ -381,6 +381,7 @@ int main() {
     // Measure actual application startup up to the Username prompt.
     std::cout << "1.2 Full application startup\n";
 
+    #ifdef _WIN32
     const double fullStartupMs = measureApplicationStartup(root);
 
     std::cout << "Process launch to Username prompt: "
@@ -393,6 +394,11 @@ int main() {
               << " - Full startup limit: 5000 ms\n\n";
 
     passed = passed && fullStartupPassed;
+
+    #else
+    std::cout << "Full process startup benchmark is Windows-only.\n";
+    std::cout << "SKIP - Full startup limit: Windows-only benchmark\n\n";
+    #endif
 
     // 2. Load the student repository.
     std::cout << "2. Student capacity\n";

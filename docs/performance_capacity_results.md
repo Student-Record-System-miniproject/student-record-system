@@ -2,11 +2,11 @@
 
 
 
-\*\*Issue:\*\* #27  
+\*\*Issue:\*\* #27
 
-\*\*Requirements:\*\* SRM-NF-001, SRM-NF-002, SRM-NF-007  
+\*\*Requirements:\*\* SRM-NF-001, SRM-NF-002, SRM-NF-007
 
-\*\*Test Reference:\*\* TC-Perf-01  
+\*\*Test Reference:\*\* TC-Perf-01
 
 \*\*Status:\*\* Performance and capacity tests executed
 
@@ -293,4 +293,3 @@ All nine automated test suites passed in both the default and Release configurat
 
 
 The benchmark results demonstrate that the tested requirements SRM-NF-001, SRM-NF-002 and SRM-NF-007 are satisfied under the documented test environment.
-

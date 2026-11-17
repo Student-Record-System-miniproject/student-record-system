@@ -1,5 +1,6 @@
 #include "srm/audit_service.h"
 #include "srm/auth_service.h"
+#include "srm/backup_service.h"
 #include "srm/common_types.h"
 #include "srm/input_validator.h"
 #include "srm/rbac.h"
@@ -7,6 +8,7 @@
 #include "srm/attendance_service.h"
 
 #include <chrono>
+#include <cstddef>
 #include <iostream>
 #include <string>
 #ifdef _WIN32
@@ -26,6 +28,8 @@ void displayMenu(const srm::Session& session) {
         std::cout << "1. Manage users\n";
         std::cout << "2. Manage students\n";
         std::cout << "3. View reports\n";
+        std::cout << "4. Create Backup\n";
+        std::cout << "5. Restore Backup\n";
     }
     else if (session.role == srm::Role::Teacher) {
         std::cout << "\nTeacher Menu\n";
@@ -402,11 +406,69 @@ bool promptLogin(srm::AuthService& authService,
     return true;
 }
 
+bool restoreBackupFromMenu(
+    srm::BackupService& backupService,
+    const srm::Session& session) {
+
+    const auto backups = backupService.listBackups();
+
+    if (backups.empty()) {
+        std::cout << "\nNo backups available.\n";
+        return true;
+    }
+
+    std::cout << "\nAvailable Backups:\n";
+
+    for (std::size_t i = 0; i < backups.size(); ++i) {
+        std::cout << i + 1 << ". "
+                  << backups[i].filename().string()
+                  << "\n";
+    }
+
+    std::cout << "\nSelect backup number: ";
+
+    std::string backupChoice;
+
+    if (!std::getline(std::cin, backupChoice)) {
+        return false;
+    }
+
+    int selectedBackup = 0;
+
+    if (!srm::InputValidator::parseInteger(
+            backupChoice, selectedBackup) ||
+        selectedBackup < 1 ||
+        selectedBackup > static_cast<int>(backups.size())) {
+
+        std::cout << "Invalid backup selection.\n";
+        return true;
+    }
+
+    std::cout << "\nWARNING: Restoring will replace current data.\n";
+    std::cout << "Type Y to confirm restoration: ";
+
+    std::string confirmation;
+
+    if (!std::getline(std::cin, confirmation)) {
+        return false;
+    }
+
+    const auto result = backupService.restoreBackup(
+        session,
+        backups[static_cast<std::size_t>(selectedBackup - 1)]
+            .filename().string(),
+        confirmation);
+
+    std::cout << result.message << "\n";
+    return true;
+}
+
 bool processMenuAction(
     int choiceNumber,
     srm::AuthService& authService,
     const srm::StudentService& studentService,
     srm::AttendanceService& attendanceService,
+    srm::BackupService& backupService,
     srm::AuditService& auditService,
     srm::Session& session) {
 
@@ -439,6 +501,22 @@ bool processMenuAction(
                   << students.size() << "\n";
     }
     else if (choiceNumber == 4 &&
+             session.role == srm::Role::Administrator) {
+
+        std::cout << "\nCreating system backup...\n";
+
+        const auto result = backupService.createBackup(session);
+
+        std::cout << result.message << "\n";
+    }
+    else if (choiceNumber == 5 &&
+             session.role == srm::Role::Administrator) {
+
+        if (!restoreBackupFromMenu(backupService, session)) {
+            return false;
+        }
+    }
+    else if (choiceNumber == 4 &&
              session.role == srm::Role::Teacher) {
         if (!markStudentAttendance(attendanceService, session)) {
             return false;
@@ -453,6 +531,7 @@ bool runAuthenticatedSession(
     srm::AuthService& authService,
     const srm::StudentService& studentService,
     srm::AttendanceService& attendanceService,
+    srm::BackupService& backupService,
     srm::AuditService& auditService,
     srm::Session& session) {
 
@@ -466,7 +545,8 @@ bool runAuthenticatedSession(
 
         int choiceNumber = 0;
         const int maxChoice =
-            (session.role == srm::Role::Teacher) ? 4 : 3;
+            session.role == srm::Role::Administrator ? 5 :
+            session.role == srm::Role::Teacher ? 4 : 3;
 
         if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
             !srm::InputValidator::validateRange(
@@ -478,7 +558,8 @@ bool runAuthenticatedSession(
 
         if (!processMenuAction(
                 choiceNumber, authService, studentService,
-                attendanceService, auditService, session)) {
+                attendanceService, backupService,
+                auditService, session)) {
             break;
         }
     }
@@ -488,6 +569,11 @@ bool runAuthenticatedSession(
 
 int main() {
     srm::AuditService auditService("data/audit.log");
+
+    srm::BackupService backupService(
+        "data",
+        "backups",
+        &auditService);
 
     srm::AccessController::setEventLogger(
         [&auditService](const srm::SecurityEvent& ev) {
@@ -525,7 +611,7 @@ int main() {
 
         if (!runAuthenticatedSession(
                 authService, studentService, attendanceService,
-                auditService, session)) {
+                backupService, auditService, session)) {
             return 0;
         }
     }
