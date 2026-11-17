@@ -1,5 +1,10 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "srm/auth_service.h"
 #include "srm/crypto.h"
+#include "srm/audit_service.h"
 
 #include <cassert>
 #include <filesystem>
@@ -7,6 +12,7 @@
 #include <sstream>
 #include <string>
 #include <chrono>
+#include <iterator>
 
 namespace {
 
@@ -20,37 +26,37 @@ const Session adminSession{Role::Administrator, true, {}, "admin"};
 const Session teacherSession{Role::Teacher, true, {}, "teacher1"};
 const Session studentSession{Role::Student, true, "S001", "student1"};
 
-// Fast iterations for testing
 constexpr unsigned int TEST_ITERATIONS = 1000;
 
 void testAccountLockoutAfterThreeFailedAttempts() {
-    const auto path = std::filesystem::temp_directory_path() / "srm-auth-lockout.tsv";
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-lockout.tsv";
     std::filesystem::remove(path);
 
     AuthService service(path, TEST_ITERATIONS);
-    assert(service.registerUser(adminSession, "john_doe", "Password123", Role::Student, "S001").success);
 
-    // Attempt 1: Incorrect password
+    const auto registrationResult = service.registerUser(
+        adminSession, "john_doe", "Password123",
+        Role::Student, "S001");
+    assert(registrationResult.success);
+
     const auto res1 = service.login("john_doe", "WrongPass1");
     assert(!res1.success);
     assert(res1.error == ErrorCode::InvalidCredentials);
     assert(service.getFailedAttempts("john_doe") == 1);
     assert(!service.isAccountLocked("john_doe"));
 
-    // Attempt 2: Incorrect password
     const auto res2 = service.login("john_doe", "WrongPass2");
     assert(!res2.success);
     assert(res2.error == ErrorCode::InvalidCredentials);
     assert(service.getFailedAttempts("john_doe") == 2);
     assert(!service.isAccountLocked("john_doe"));
 
-    // Attempt 3: Incorrect password -> Locks account
     const auto res3 = service.login("john_doe", "WrongPass3");
     assert(!res3.success);
     assert(res3.error == ErrorCode::AccountLocked);
     assert(service.isAccountLocked("john_doe"));
 
-    // Attempt 4: CORRECT password, but account is locked -> MUST BE REFUSED
     const auto res4 = service.login("john_doe", "Password123");
     assert(!res4.success);
     assert(res4.error == ErrorCode::AccountLocked);
@@ -59,26 +65,35 @@ void testAccountLockoutAfterThreeFailedAttempts() {
 }
 
 void testLockoutPersistsAcrossRestart() {
-    const auto path = std::filesystem::temp_directory_path() / "srm-auth-restart.tsv";
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-restart.tsv";
     std::filesystem::remove(path);
 
-    // Session 1: Lock the account
     {
         AuthService service(path, TEST_ITERATIONS);
-        assert(service.registerUser(adminSession, "jane_doe", "Secure456", Role::Teacher).success);
-        service.login("jane_doe", "bad1");
-        service.login("jane_doe", "bad2");
-        service.login("jane_doe", "bad3");
+
+        const auto registrationResult = service.registerUser(
+            adminSession, "jane_doe", "Secure456", Role::Teacher);
+        assert(registrationResult.success);
+
+        const auto attempt1 = service.login("jane_doe", "bad1");
+        const auto attempt2 = service.login("jane_doe", "bad2");
+        const auto attempt3 = service.login("jane_doe", "bad3");
+
+        assert(!attempt1.success);
+        assert(!attempt2.success);
+        assert(!attempt3.success);
         assert(service.isAccountLocked("jane_doe"));
     }
 
-    // Session 2: Reload from disk (simulates application restart)
     {
         AuthService restartedService(path, TEST_ITERATIONS);
+
         assert(restartedService.isAccountLocked("jane_doe"));
 
-        // Login with correct password still refused after restart
-        const auto result = restartedService.login("jane_doe", "Secure456");
+        const auto result = restartedService.login(
+            "jane_doe", "Secure456");
+
         assert(!result.success);
         assert(result.error == ErrorCode::AccountLocked);
     }
@@ -87,38 +102,50 @@ void testLockoutPersistsAcrossRestart() {
 }
 
 void testAdminOnlyUnlock() {
-    const auto path = std::filesystem::temp_directory_path() / "srm-auth-unlock.tsv";
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-unlock.tsv";
     std::filesystem::remove(path);
 
     AuthService service(path, TEST_ITERATIONS);
-    assert(service.registerUser(adminSession, "bob", "BobPass99", Role::Student, "S002").success);
 
-    // Lock bob's account
-    service.login("bob", "x");
-    service.login("bob", "y");
-    service.login("bob", "z");
+    const auto registrationResult = service.registerUser(
+        adminSession, "bob", "BobPass99",
+        Role::Student, "S002");
+    assert(registrationResult.success);
+
+    const auto attempt1 = service.login("bob", "x");
+    const auto attempt2 = service.login("bob", "y");
+    const auto attempt3 = service.login("bob", "z");
+
+    assert(!attempt1.success);
+    assert(!attempt2.success);
+    assert(!attempt3.success);
     assert(service.isAccountLocked("bob"));
 
-    // Non-admin roles cannot unlock
-    const auto teacherUnlock = service.unlockAccount(teacherSession, "bob");
+    const auto teacherUnlock = service.unlockAccount(
+        teacherSession, "bob");
+
     assert(!teacherUnlock.success);
     assert(teacherUnlock.error == ErrorCode::AccessDenied);
     assert(service.isAccountLocked("bob"));
 
-    const auto studentUnlock = service.unlockAccount(studentSession, "bob");
+    const auto studentUnlock = service.unlockAccount(
+        studentSession, "bob");
+
     assert(!studentUnlock.success);
     assert(studentUnlock.error == ErrorCode::AccessDenied);
     assert(service.isAccountLocked("bob"));
 
-    // Administrator unlocks bob
-    const auto adminUnlock = service.unlockAccount(adminSession, "bob");
+    const auto adminUnlock = service.unlockAccount(
+        adminSession, "bob");
+
     assert(adminUnlock.success);
     assert(adminUnlock.error == ErrorCode::None);
     assert(!service.isAccountLocked("bob"));
     assert(service.getFailedAttempts("bob") == 0);
 
-    // Bob can now log in successfully with his correct password
     const auto loginResult = service.login("bob", "BobPass99");
+
     assert(loginResult.success);
     assert(loginResult.session.authenticated);
     assert(loginResult.session.role == Role::Student);
@@ -128,19 +155,26 @@ void testAdminOnlyUnlock() {
 }
 
 void testSuccessfulLoginResetsFailedAttempts() {
-    const auto path = std::filesystem::temp_directory_path() / "srm-auth-reset.tsv";
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-reset.tsv";
     std::filesystem::remove(path);
 
     AuthService service(path, TEST_ITERATIONS);
-    assert(service.registerUser(adminSession, "charlie", "Alpha123", Role::Teacher).success);
 
-    // Fail twice
-    service.login("charlie", "wrong1");
-    service.login("charlie", "wrong2");
+    const auto registrationResult = service.registerUser(
+        adminSession, "charlie", "Alpha123", Role::Teacher);
+    assert(registrationResult.success);
+
+    const auto failedLogin1 = service.login("charlie", "wrong1");
+    const auto failedLogin2 = service.login("charlie", "wrong2");
+
+    assert(!failedLogin1.success);
+    assert(!failedLogin2.success);
     assert(service.getFailedAttempts("charlie") == 2);
 
-    // Successful login resets counter
-    const auto successLogin = service.login("charlie", "Alpha123");
+    const auto successLogin = service.login(
+        "charlie", "Alpha123");
+
     assert(successLogin.success);
     assert(service.getFailedAttempts("charlie") == 0);
     assert(!service.isAccountLocked("charlie"));
@@ -149,46 +183,55 @@ void testSuccessfulLoginResetsFailedAttempts() {
 }
 
 void testInitialAdminSetupAndUserRegistrationAuthorization() {
-    const auto path = std::filesystem::temp_directory_path() / "srm-auth-admin-setup.tsv";
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-admin-setup.tsv";
     std::filesystem::remove(path);
 
     AuthService service(path, TEST_ITERATIONS);
 
-    // Step 1: Initial admin setup succeeds when no accounts exist
-    const auto setupRes = service.setupInitialAdmin("superadmin", "RootPassword123");
+    const auto setupRes = service.setupInitialAdmin(
+        "superadmin", "RootPassword123");
+
     assert(setupRes.success);
     assert(setupRes.error == ErrorCode::None);
 
-    // Verify initial admin can log in
-    const auto adminLogin = service.login("superadmin", "RootPassword123");
+    const auto adminLogin = service.login(
+        "superadmin", "RootPassword123");
+
     assert(adminLogin.success);
     assert(adminLogin.session.role == Role::Administrator);
 
-    // Step 2: Second attempt to run setupInitialAdmin is rejected (prevents privilege escalation)
-    const auto secondSetup = service.setupInitialAdmin("intruder", "HackerPass123");
+    const auto secondSetup = service.setupInitialAdmin(
+        "intruder", "HackerPass123");
+
     assert(!secondSetup.success);
     assert(secondSetup.error == ErrorCode::AccessDenied);
 
-    // Step 3: Normal user registration requires Administrator session (RBAC Operation::RegisterUser)
     const auto teacherRegister = service.registerUser(
-        teacherSession, "new_student", "StudentPass1", Role::Student, "S301");
+        teacherSession, "new_student", "StudentPass1",
+        Role::Student, "S301");
+
     assert(!teacherRegister.success);
     assert(teacherRegister.error == ErrorCode::AccessDenied);
 
     const auto studentRegister = service.registerUser(
-        studentSession, "new_student", "StudentPass1", Role::Student, "S301");
+        studentSession, "new_student", "StudentPass1",
+        Role::Student, "S301");
+
     assert(!studentRegister.success);
     assert(studentRegister.error == ErrorCode::AccessDenied);
 
-    // Administrator registers new user successfully
     const auto adminRegister = service.registerUser(
-        adminSession, "new_student", "StudentPass1", Role::Student, "S301");
+        adminSession, "new_student", "StudentPass1",
+        Role::Student, "S301");
+
     assert(adminRegister.success);
     assert(adminRegister.error == ErrorCode::None);
 
-    // Step 4: Duplicate user registration fails with ErrorCode::DuplicateRecord
     const auto dupRegister = service.registerUser(
-        adminSession, "new_student", "AnotherPass2", Role::Student, "S302");
+        adminSession, "new_student", "AnotherPass2",
+        Role::Student, "S302");
+
     assert(!dupRegister.success);
     assert(dupRegister.error == ErrorCode::DuplicateRecord);
 
@@ -196,76 +239,302 @@ void testInitialAdminSetupAndUserRegistrationAuthorization() {
 }
 
 void testPasswordHashingAndSecureStorage() {
-    const auto path = std::filesystem::temp_directory_path() / "srm-auth-crypto.tsv";
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-crypto.tsv";
     std::filesystem::remove(path);
 
     AuthService service(path, TEST_ITERATIONS);
     const std::string rawPassword = "TopSecretPassword!#42";
-    assert(service.registerUser(adminSession, "secure_user", rawPassword, Role::Teacher).success);
 
-    // Inspect the persisted storage file on disk directly
+    const auto registrationResult = service.registerUser(
+        adminSession, "secure_user", rawPassword, Role::Teacher);
+    assert(registrationResult.success);
+
     std::ifstream file(path);
     assert(file.is_open());
-    std::string content((std::istreambuf_iterator<char>(file)),
-                         std::istreambuf_iterator<char>());
+
+    std::string content(
+        (std::istreambuf_iterator<char>(file)),
+        std::istreambuf_iterator<char>());
+
     file.close();
 
-    // Plaintext password MUST NEVER appear anywhere in the storage file
     assert(content.find(rawPassword) == std::string::npos);
-
-    // PBKDF2 hash identifier and salt format MUST appear
     assert(content.find("pbkdf2_sha256$") != std::string::npos);
 
-    // Verify authentication succeeds with the raw password via PBKDF2 verification
-    const auto loginSuccess = service.login("secure_user", rawPassword);
+    const auto loginSuccess = service.login(
+        "secure_user", rawPassword);
+
     assert(loginSuccess.success);
     assert(loginSuccess.session.role == Role::Teacher);
 
-    // Authentication fails with wrong password
-    const auto loginFail = service.login("secure_user", "IncorrectPassword");
+    const auto loginFail = service.login(
+        "secure_user", "IncorrectPassword");
+
     assert(!loginFail.success);
     assert(loginFail.error == ErrorCode::InvalidCredentials);
 
     std::filesystem::remove(path);
 }
 
+void testAdminCanDeactivateAccount() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-deactivate.tsv";
+    std::filesystem::remove(path);
+
+    {
+        AuthService service(path, TEST_ITERATIONS);
+
+        const auto registration =
+            service.registerUser(adminSession, "deactivate_user",
+                                 "Password123", Role::Student, "S010");
+        assert(registration.success);
+
+        const auto deactivation =
+            service.deactivateAccount(adminSession, "deactivate_user");
+        assert(deactivation.success);
+
+        const auto login =
+            service.login("deactivate_user", "Password123");
+        assert(!login.success);
+        assert(login.error == ErrorCode::AccessDenied);
+    }
+
+    // Verify deactivation persists after restarting the service.
+    {
+        AuthService restartedService(path, TEST_ITERATIONS);
+
+        const auto login =
+            restartedService.login("deactivate_user", "Password123");
+        assert(!login.success);
+        assert(login.error == ErrorCode::AccessDenied);
+    }
+
+    std::filesystem::remove(path);
+}
+
+void testAdminCanResetPassword() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-password-reset.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+
+    const auto registration =
+        service.registerUser(adminSession, "reset_user",
+                             "OldPassword123", Role::Student, "S011");
+    assert(registration.success);
+
+    const auto reset =
+        service.resetPassword(adminSession, "reset_user", "NewPassword456");
+    assert(reset.success);
+
+    // Old password must no longer work.
+    const auto oldLogin =
+        service.login("reset_user", "OldPassword123");
+    assert(!oldLogin.success);
+    assert(oldLogin.error == ErrorCode::InvalidCredentials);
+
+    // New password must work.
+    const auto newLogin =
+        service.login("reset_user", "NewPassword456");
+    assert(newLogin.success);
+
+    std::filesystem::remove(path);
+}
+
+void testNonAdminCannotDeactivateOrResetPassword() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-manage-users-rbac.tsv";
+    std::filesystem::remove(path);
+
+    AuthService service(path, TEST_ITERATIONS);
+
+    const auto registration =
+        service.registerUser(adminSession, "protected_user",
+                             "Password123", Role::Student, "S012");
+    assert(registration.success);
+
+    // Teacher cannot deactivate or reset the account.
+    const auto teacherDeactivate =
+        service.deactivateAccount(teacherSession, "protected_user");
+    assert(!teacherDeactivate.success);
+    assert(teacherDeactivate.error == ErrorCode::AccessDenied);
+
+    const auto teacherReset =
+        service.resetPassword(teacherSession, "protected_user",
+                              "NewPassword456");
+    assert(!teacherReset.success);
+    assert(teacherReset.error == ErrorCode::AccessDenied);
+
+    // Student cannot deactivate or reset the account.
+    const auto studentDeactivate =
+        service.deactivateAccount(studentSession, "protected_user");
+    assert(!studentDeactivate.success);
+    assert(studentDeactivate.error == ErrorCode::AccessDenied);
+
+    const auto studentReset =
+        service.resetPassword(studentSession, "protected_user",
+                              "NewPassword456");
+    assert(!studentReset.success);
+    assert(studentReset.error == ErrorCode::AccessDenied);
+
+    // Original account remains usable.
+    const auto login = service.login("protected_user", "Password123");
+    assert(login.success);
+
+    std::filesystem::remove(path);
+}
+
+void testPasswordsNeverAppearInAuditLogs() {
+    const auto userPath =
+        std::filesystem::temp_directory_path() / "srm-auth-audit-security.tsv";
+
+    const auto auditPath =
+        std::filesystem::temp_directory_path() / "srm-password-audit.log";
+
+    std::filesystem::remove(userPath);
+    std::filesystem::remove(auditPath);
+
+    const std::string initialPassword = "InitialSecret@123";
+    const std::string wrongPassword = "WrongSecret@456";
+    const std::string newPassword = "NewSecret@789";
+
+    {
+        srm::AuditService auditService(auditPath);
+        AuthService service(userPath, TEST_ITERATIONS);
+        service.setAuditService(&auditService);
+
+        // Register a user.
+        const auto registration = service.registerUser(
+            adminSession, "audit_user", initialPassword, Role::Teacher);
+        assert(registration.success);
+
+        // Failed login.
+        const auto failedLogin =
+            service.login("audit_user", wrongPassword);
+        assert(!failedLogin.success);
+
+        // Successful login.
+        const auto successfulLogin =
+            service.login("audit_user", initialPassword);
+        assert(successfulLogin.success);
+
+        // Reset password.
+        const auto reset = service.resetPassword(
+            adminSession, "audit_user", newPassword);
+        assert(reset.success);
+
+        // Login using the new password.
+        const auto newLogin =
+            service.login("audit_user", newPassword);
+        assert(newLogin.success);
+    }
+
+    // Read the complete audit log.
+    std::ifstream file(auditPath);
+    assert(file.is_open());
+
+    const std::string auditContents(
+        (std::istreambuf_iterator<char>(file)),
+        std::istreambuf_iterator<char>());
+
+    file.close();
+
+    // None of the supplied passwords may appear in the audit log.
+    assert(auditContents.find(initialPassword) == std::string::npos);
+    assert(auditContents.find(wrongPassword) == std::string::npos);
+    assert(auditContents.find(newPassword) == std::string::npos);
+
+    std::filesystem::remove(userPath);
+    std::filesystem::remove(auditPath);
+}
+
 void testCryptoPBKDF2Verification() {
-    // Direct test of Crypto utility
+    // Verify against a known PBKDF2-HMAC-SHA256 test vector.
+    // Password: "password"
+    // Salt: "salt" (hex: 73616c74)
+    // Iterations: 1
+    // Derived key length: 32 bytes
+    const std::string knownVector = Crypto::hashPassword(
+        "password", "73616c74", 1);
+
+    assert(knownVector ==
+           "pbkdf2_sha256$1$73616c74$"
+           "120fb6cffcf8b32c43e7225256c4f837"
+           "a86548c92ccc35480805987cb70be17b");
+
+    assert(Crypto::verifyPassword("password", knownVector));
+    assert(!Crypto::verifyPassword("wrongpassword", knownVector));
     const std::string password = "TestPassword#2026";
+
+    // Generate two independent salts.
+    const std::string salt1 = Crypto::generateSaltHex();
+    const std::string salt2 = Crypto::generateSaltHex();
+
+    // A 16-byte salt must contain 32 hexadecimal characters.
+    assert(salt1.size() == 32);
+    assert(salt2.size() == 32);
+
+    // Every generated salt should be unique.
+    assert(salt1 != salt2);
+
+    // Hashing the same password twice must produce different hashes.
     const std::string hash1 = Crypto::hashPassword(password, "", 500);
     const std::string hash2 = Crypto::hashPassword(password, "", 500);
 
-    // Unique salts ensure different hashes for the same password
     assert(hash1 != hash2);
 
-    // Both hashes verify successfully with the correct password
+    // Verify that the stored format identifies PBKDF2-HMAC-SHA256.
+    assert(hash1.find("pbkdf2_sha256$") == 0);
+    assert(hash2.find("pbkdf2_sha256$") == 0);
+
+    // Extract the salt from each stored hash.
+    const std::size_t saltStart1 = hash1.find('$', hash1.find('$') + 1) + 1;
+    const std::size_t saltEnd1 = hash1.find('$', saltStart1);
+
+    const std::size_t saltStart2 = hash2.find('$', hash2.find('$') + 1) + 1;
+    const std::size_t saltEnd2 = hash2.find('$', saltStart2);
+
+    const std::string storedSalt1 =
+        hash1.substr(saltStart1, saltEnd1 - saltStart1);
+    const std::string storedSalt2 =
+        hash2.substr(saltStart2, saltEnd2 - saltStart2);
+
+    assert(storedSalt1.size() == 32);
+    assert(storedSalt2.size() == 32);
+    assert(storedSalt1 != storedSalt2);
+
+    // Both hashes verify successfully with the correct password.
     assert(Crypto::verifyPassword(password, hash1));
     assert(Crypto::verifyPassword(password, hash2));
 
-    // Wrong password fails verification
+    // Wrong password fails verification.
     assert(!Crypto::verifyPassword("WrongPassword", hash1));
     assert(!Crypto::verifyPassword("", hash1));
 
-    // Malformed hashes fail gracefully
+    // Malformed hashes fail gracefully.
     assert(!Crypto::verifyPassword(password, "invalid_format_string"));
     assert(!Crypto::verifyPassword(password, "sha256$100$salt$hash"));
+
 }
 
 void testSessionTimeout() {
     Session session;
     session.authenticated = true;
 
-    // Session inactive for more than 5 minutes -> must expire
     session.lastActivity =
-        std::chrono::steady_clock::now() - std::chrono::minutes(6);
+        std::chrono::steady_clock::now() -
+        std::chrono::minutes(6);
+
     assert(srm::isSessionExpired(session));
 
-    // Recently active session -> must remain valid
     session.lastActivity = std::chrono::steady_clock::now();
+
     assert(!srm::isSessionExpired(session));
 
-    // Unauthenticated session -> must be considered expired
     session.authenticated = false;
+
     assert(srm::isSessionExpired(session));
 }
 
@@ -278,64 +547,154 @@ void testSecureInputValidation() {
 
     const std::string longInput(101, 'A');
 
-    // 1. Reject empty username during initial admin setup.
     const auto emptyUsername =
         service.setupInitialAdmin("", "RootPassword123");
+
     assert(!emptyUsername.success);
     assert(emptyUsername.error == ErrorCode::InvalidInput);
 
-    // 2. Reject excessively long username.
     const auto longUsername =
         service.setupInitialAdmin(longInput, "RootPassword123");
+
     assert(!longUsername.success);
     assert(longUsername.error == ErrorCode::InvalidInput);
 
-    // 3. Reject control characters in username.
     const auto malformedUsername =
         service.setupInitialAdmin("admin\nuser", "RootPassword123");
+
     assert(!malformedUsername.success);
     assert(malformedUsername.error == ErrorCode::InvalidInput);
 
-    // 4. Valid admin setup should still succeed.
     const auto setup =
         service.setupInitialAdmin("admin", "RootPassword123");
+
     assert(setup.success);
 
-    // 5. Reject empty login username.
-    const auto emptyLogin = service.login("", "RootPassword123");
+    const auto emptyLogin =
+        service.login("", "RootPassword123");
+
     assert(!emptyLogin.success);
     assert(emptyLogin.error == ErrorCode::InvalidInput);
 
-    // 6. Reject excessively long login password.
-    const auto longPassword = service.login("admin", longInput);
+    const auto longPassword =
+        service.login("admin", longInput);
+
     assert(!longPassword.success);
     assert(longPassword.error == ErrorCode::InvalidInput);
 
-    // 7. Reject malformed username during account unlock.
     const auto invalidUnlock =
         service.unlockAccount(adminSession, "admin\n");
+
     assert(!invalidUnlock.success);
     assert(invalidUnlock.error == ErrorCode::InvalidInput);
 
-    // 8. Reject malformed student roll number during registration.
     const auto invalidRoll = service.registerUser(
         adminSession, "student2", "StudentPass123",
         Role::Student, "S002\n");
+
     assert(!invalidRoll.success);
     assert(invalidRoll.error == ErrorCode::InvalidInput);
 
-    // 9. Reject excessively long student roll number.
     const auto longRoll = service.registerUser(
         adminSession, "student3", "StudentPass123",
         Role::Student, longInput);
+
     assert(!longRoll.success);
     assert(longRoll.error == ErrorCode::InvalidInput);
 
-    // 10. Valid registration should still succeed.
     const auto validRegistration = service.registerUser(
         adminSession, "student4", "StudentPass123",
         Role::Student, "S004");
+
     assert(validRegistration.success);
+
+    std::filesystem::remove(path);
+}
+void testRegisteredUserPersistsAcrossRestart() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-user-restart.tsv";
+
+    std::filesystem::remove(path);
+
+    // First run: register a teacher account.
+    {
+        AuthService service(path, TEST_ITERATIONS);
+
+        const auto result = service.registerUser(
+            adminSession,
+            "persist_user",
+            "Persist123",
+            Role::Teacher
+        );
+
+        assert(result.success);
+        assert(std::filesystem::exists(path));
+    }
+
+    // Second run: verify the registered account can log in.
+    {
+        AuthService restartedService(path, TEST_ITERATIONS);
+
+        const auto login = restartedService.login(
+            "persist_user",
+            "Persist123"
+        );
+
+        assert(login.success);
+        assert(login.session.role == Role::Teacher);
+    }
+
+    std::filesystem::remove(path);
+}
+
+void testPasswordChangePersistsAcrossRestart() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "srm-auth-password-change-restart.tsv";
+
+    std::filesystem::remove(path);
+
+    const std::string oldPassword = "OldPassword123";
+    const std::string newPassword = "NewPassword456";
+
+    // First run: register, log in, and change the password.
+    {
+        AuthService service(path, TEST_ITERATIONS);
+
+        const auto registration = service.registerUser(
+            adminSession,
+            "password_restart_user",
+            oldPassword,
+            Role::Teacher);
+
+        assert(registration.success);
+
+        const auto login = service.login(
+            "password_restart_user", oldPassword);
+
+        assert(login.success);
+
+        const auto changeResult = service.changePassword(
+            login.session, newPassword);
+
+        assert(changeResult.success);
+    }
+
+    // Second run: create a new service using the same storage file.
+    {
+        AuthService restartedService(path, TEST_ITERATIONS);
+
+        const auto oldPasswordLogin = restartedService.login(
+            "password_restart_user", oldPassword);
+
+        assert(!oldPasswordLogin.success);
+        assert(oldPasswordLogin.error == ErrorCode::InvalidCredentials);
+
+        const auto newPasswordLogin = restartedService.login(
+            "password_restart_user", newPassword);
+
+        assert(newPasswordLogin.success);
+        assert(newPasswordLogin.session.role == Role::Teacher);
+    }
 
     std::filesystem::remove(path);
 }
@@ -352,5 +711,11 @@ int main() {
     testCryptoPBKDF2Verification();
     testSessionTimeout();
     testSecureInputValidation();
+    testAdminCanDeactivateAccount();
+    testAdminCanResetPassword();
+    testNonAdminCannotDeactivateOrResetPassword();
+    testPasswordsNeverAppearInAuditLogs();
+    testRegisteredUserPersistsAcrossRestart();
+    testPasswordChangePersistsAcrossRestart();
     return 0;
 }

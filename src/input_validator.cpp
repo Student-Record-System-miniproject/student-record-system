@@ -1,7 +1,7 @@
 #include "srm/input_validator.h"
-
 #include <charconv>
 #include <cctype>
+#include <array>
 
 namespace srm {
 
@@ -44,4 +44,77 @@ bool InputValidator::validateConfirmation(const std::string& input) {
            input == "N" || input == "n";
 }
 
+bool InputValidator::validateDateOfBirth(const std::string& date) {
+    if (date.size() != 10 ||
+        date[4] != '-' ||
+        date[7] != '-') {
+        return false;
+    }
+
+    int year = 0;
+    int month = 0;
+    int day = 0;
+
+    if (!parseInteger(date.substr(0, 4), year) ||
+        !parseInteger(date.substr(5, 2), month) ||
+        !parseInteger(date.substr(8, 2), day)) {
+        return false;
+    }
+
+    if (year < 1900 || month < 1 || month > 12) {
+        return false;
+    }
+
+    const std::array<int, 12> daysInMonth = {
+        31, 28, 31, 30, 31, 30,
+        31, 31, 30, 31, 30, 31
+    };
+
+    int maxDays = daysInMonth[month - 1];
+
+    const bool isLeapYear =
+        (year % 400 == 0) ||
+        (year % 4 == 0 && year % 100 != 0);
+
+    if (month == 2 && isLeapYear) {
+        maxDays = 29;
+    }
+
+    return day >= 1 && day <= maxDays;
+}
+
+bool InputValidator::validateContactNumber(const std::string& number) {
+    if (number.size() != 10) {
+        return false;
+    }
+
+    for (unsigned char ch : number) {
+        if (!std::isdigit(ch)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool InputValidator::validatePassword(const std::string& password) {
+    if (password.length() < 8) {
+        return false;
+    }
+
+    bool hasLetter = false;
+    bool hasDigit = false;
+
+    for (unsigned char ch : password) {
+        if (std::isalpha(ch)) {
+            hasLetter = true;
+        }
+
+        if (std::isdigit(ch)) {
+            hasDigit = true;
+        }
+    }
+
+    return hasLetter && hasDigit;
+}
 }  // namespace srm

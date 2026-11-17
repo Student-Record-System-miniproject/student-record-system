@@ -1,4 +1,3 @@
-
 #include "srm/audit_service.h"
 #include "srm/auth_service.h"
 #include "srm/backup_service.h"
@@ -6,11 +5,18 @@
 #include "srm/input_validator.h"
 #include "srm/rbac.h"
 #include "srm/student_service.h"
+#include "srm/attendance_service.h"
 
 #include <chrono>
 #include <cstddef>
 #include <iostream>
 #include <string>
+#ifdef _WIN32
+#include <conio.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 void displayMenu(const srm::Session& session) {
     std::cout << "\nLogin successful.\n";
@@ -30,6 +36,7 @@ void displayMenu(const srm::Session& session) {
         std::cout << "1. Manage student records\n";
         std::cout << "2. Enter marks\n";
         std::cout << "3. View reports\n";
+        std::cout << "4. Mark attendance\n";
     }
     else if (session.role == srm::Role::Student) {
         std::cout << "\nStudent Menu\n";
@@ -39,213 +46,575 @@ void displayMenu(const srm::Session& session) {
     }
 }
 
-int main() {
+#ifdef _WIN32
+bool readMaskedPasswordPlatform(std::string& password) {
+    while (true) {
+        int ch = _getch();
 
-    // Initialize central audit logging service
+        if (ch == '\r') {
+            std::cout << '\n';
+            return true;
+        }
+
+        if (ch == '\b') {
+            if (!password.empty()) {
+                password.pop_back();
+                std::cout << "\b \b" << std::flush;
+            }
+            continue;
+        }
+
+        // Ignore special keys such as arrow keys.
+        if (ch == 0 || ch == 224) {
+            (void)_getch();
+            continue;
+        }
+
+        if (ch == 3) {
+            std::cout << '\n';
+            return false;
+        }
+
+        if (ch >= 32 && ch != 127) {
+            password.push_back(static_cast<char>(ch));
+            std::cout << '*' << std::flush;
+        }
+    }
+}
+#else
+bool readMaskedPasswordPlatform(std::string& password) {
+    termios originalSettings{};
+
+    if (tcgetattr(STDIN_FILENO, &originalSettings) != 0) {
+        std::cerr << "\nUnable to configure masked password input.\n";
+        return false;
+    }
+
+    termios maskedSettings = originalSettings;
+    maskedSettings.c_lflag &= static_cast<tcflag_t>(~(ECHO | ICANON));
+    maskedSettings.c_cc[VMIN] = 1;
+    maskedSettings.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &maskedSettings) != 0) {
+        std::cerr << "\nUnable to configure masked password input.\n";
+        return false;
+    }
+
+    while (true) {
+        char ch;
+
+        if (!std::cin.get(ch)) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &originalSettings);
+            std::cout << '\n';
+            return false;
+        }
+
+        if (ch == '\n' || ch == '\r') {
+            tcsetattr(STDIN_FILENO, TCSANOW, &originalSettings);
+            std::cout << '\n';
+            return true;
+        }
+
+        if (ch == '\b' || ch == 127) {
+            if (!password.empty()) {
+                password.pop_back();
+                std::cout << "\b \b" << std::flush;
+            }
+            continue;
+        }
+
+        if (static_cast<unsigned char>(ch) >= 32) {
+            password.push_back(ch);
+            std::cout << '*' << std::flush;
+        }
+    }
+}
+#endif
+
+bool readMaskedPassword(const std::string& prompt,
+                        std::string& password) {
+    std::cout << prompt;
+    password.clear();
+    return readMaskedPasswordPlatform(password);
+}
+
+enum class UserMenuActionStatus {
+    Completed,
+    Retry,
+    Exit
+};
+
+UserMenuActionStatus createUserAccount(
+    srm::AuthService& authService,
+    const srm::Session& session,
+    const std::string& username,
+    srm::OperationResult& result) {
+
+    std::string password;
+    std::string roleInput;
+    std::string rollNumber;
+    int roleChoice = 0;
+
+    if (!readMaskedPassword("Enter initial password: ", password)) {
+        return UserMenuActionStatus::Exit;
+    }
+
+    std::cout << "Select role:\n";
+    std::cout << "1. Administrator\n";
+    std::cout << "2. Teacher\n";
+    std::cout << "3. Student\n";
+    std::cout << "Enter role choice: ";
+
+    if (!std::getline(std::cin, roleInput)) {
+        return UserMenuActionStatus::Exit;
+    }
+
+    if (!srm::InputValidator::parseInteger(roleInput, roleChoice) ||
+        roleChoice < 1 || roleChoice > 3) {
+        std::cout << "Invalid role selection.\n";
+        return UserMenuActionStatus::Retry;
+    }
+
+    srm::Role role = srm::Role::Administrator;
+
+    if (roleChoice == 2) {
+        role = srm::Role::Teacher;
+    }
+    else if (roleChoice == 3) {
+        role = srm::Role::Student;
+
+        std::cout << "Enter student roll number: ";
+        if (!std::getline(std::cin, rollNumber)) {
+            return UserMenuActionStatus::Exit;
+        }
+    }
+
+    result = authService.registerUser(
+        session, username, password, role, rollNumber);
+
+    return UserMenuActionStatus::Completed;
+}
+
+UserMenuActionStatus resetUserPassword(
+    srm::AuthService& authService,
+    const srm::Session& session,
+    const std::string& username,
+    srm::OperationResult& result) {
+
+    std::string newPassword;
+
+    if (!readMaskedPassword("Enter new password: ", newPassword)) {
+        return UserMenuActionStatus::Exit;
+    }
+
+    result = authService.resetPassword(
+        session, username, newPassword);
+
+    return UserMenuActionStatus::Completed;
+}
+
+UserMenuActionStatus processUserManagementChoice(
+    srm::AuthService& authService,
+    const srm::Session& session,
+    int choiceNumber) {
+
+    std::string username;
+
+    std::cout << "Enter username: ";
+    if (!std::getline(std::cin, username)) {
+        return UserMenuActionStatus::Exit;
+    }
+
+    srm::OperationResult result;
+
+    if (choiceNumber == 1) {
+        const auto status = createUserAccount(
+            authService, session, username, result);
+
+        if (status != UserMenuActionStatus::Completed) {
+            return status;
+        }
+    }
+    else if (choiceNumber == 2) {
+        result = authService.deactivateAccount(session, username);
+    }
+    else if (choiceNumber == 3) {
+        result = authService.unlockAccount(session, username);
+    }
+    else if (choiceNumber == 4) {
+        const auto status = resetUserPassword(
+            authService, session, username, result);
+
+        if (status != UserMenuActionStatus::Completed) {
+            return status;
+        }
+    }
+
+    std::cout << result.message << "\n";
+    return UserMenuActionStatus::Completed;
+}
+
+void manageUsersMenu(
+    srm::AuthService& authService,
+    const srm::Session& session) {
+
+    while (true) {
+        std::cout << "\nUser Management\n";
+        std::cout << "1. Create user account\n";
+        std::cout << "2. Deactivate user account\n";
+        std::cout << "3. Unlock user account\n";
+        std::cout << "4. Reset user password\n";
+        std::cout << "5. Back to main menu\n";
+        std::cout << "Enter your choice: ";
+
+        std::string choice;
+        if (!std::getline(std::cin, choice)) {
+            return;
+        }
+
+        int choiceNumber = 0;
+
+        if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
+            choiceNumber < 1 || choiceNumber > 5) {
+            std::cout << "Invalid choice. Please enter a number between 1 and 5.\n";
+            continue;
+        }
+
+        if (choiceNumber == 5) {
+            return;
+        }
+
+        const auto status = processUserManagementChoice(
+            authService, session, choiceNumber);
+
+        if (status == UserMenuActionStatus::Exit) {
+            return;
+        }
+    }
+}
+
+bool markStudentAttendance(
+    srm::AttendanceService& attendanceService,
+    const srm::Session& session) {
+
+    std::string rollNumber;
+    std::string subject;
+    std::string date;
+    std::string statusInput;
+
+    std::cout << "\nMark Student Attendance\n";
+
+    std::cout << "Student Roll Number: ";
+    if (!std::getline(std::cin, rollNumber)) return false;
+
+    std::cout << "Subject: ";
+    if (!std::getline(std::cin, subject)) return false;
+
+    std::cout << "Date (YYYY-MM-DD): ";
+    if (!std::getline(std::cin, date)) return false;
+
+    std::cout << "Attendance (P for Present / A for Absent): ";
+    if (!std::getline(std::cin, statusInput)) return false;
+
+    srm::AttendanceStatus status;
+
+    if (statusInput == "P" || statusInput == "p") {
+        status = srm::AttendanceStatus::Present;
+    }
+    else if (statusInput == "A" || statusInput == "a") {
+        status = srm::AttendanceStatus::Absent;
+    }
+    else {
+        std::cout << "Invalid attendance status. Enter P or A.\n";
+        return true;
+    }
+
+    const auto result = attendanceService.markAttendance(
+        session, rollNumber, subject, date, status);
+
+    std::cout << result.message << "\n";
+    return true;
+}
+
+bool createInitialAdminIfNeeded(srm::AuthService& authService,
+                                int& exitCode) {
+    if (authService.hasUsers()) {
+        return true;
+    }
+
+    std::cout << "\nNo user accounts found.\n";
+    std::cout << "Create the initial Administrator account.\n";
+
+    std::string adminUsername;
+    std::string adminPassword;
+
+    std::cout << "Choose Administrator username: ";
+    if (!std::getline(std::cin, adminUsername)) {
+        exitCode = 0;
+        return false;
+    }
+
+    if (!readMaskedPassword("Choose Administrator password: ",
+                            adminPassword)) {
+        exitCode = 0;
+        return false;
+    }
+
+    const auto setupResult =
+        authService.setupInitialAdmin(adminUsername, adminPassword);
+
+    std::cout << setupResult.message << "\n";
+
+    if (!setupResult.success) {
+        exitCode = 1;
+        return false;
+    }
+
+    return true;
+}
+
+bool promptLogin(srm::AuthService& authService,
+                 srm::Session& session,
+                 int& exitCode) {
+    std::string username;
+    std::string password;
+
+    std::cout << "\nStudent Record System\n";
+    std::cout << "Username: ";
+
+    if (!std::getline(std::cin, username)) {
+        exitCode = 0;
+        return false;
+    }
+
+    if (!readMaskedPassword("Password: ", password)) {
+        exitCode = 0;
+        return false;
+    }
+
+    const srm::LoginResult result =
+        authService.login(username, password);
+
+    if (!result.success) {
+        std::cout << "\n" << result.message << "\n";
+        std::cout << "Login failed.\n";
+        exitCode = 1;
+        return false;
+    }
+
+    session = result.session;
+    return true;
+}
+
+bool restoreBackupFromMenu(
+    srm::BackupService& backupService,
+    const srm::Session& session) {
+
+    const auto backups = backupService.listBackups();
+
+    if (backups.empty()) {
+        std::cout << "\nNo backups available.\n";
+        return true;
+    }
+
+    std::cout << "\nAvailable Backups:\n";
+
+    for (std::size_t i = 0; i < backups.size(); ++i) {
+        std::cout << i + 1 << ". "
+                  << backups[i].filename().string()
+                  << "\n";
+    }
+
+    std::cout << "\nSelect backup number: ";
+
+    std::string backupChoice;
+
+    if (!std::getline(std::cin, backupChoice)) {
+        return false;
+    }
+
+    int selectedBackup = 0;
+
+    if (!srm::InputValidator::parseInteger(
+            backupChoice, selectedBackup) ||
+        selectedBackup < 1 ||
+        selectedBackup > static_cast<int>(backups.size())) {
+
+        std::cout << "Invalid backup selection.\n";
+        return true;
+    }
+
+    std::cout << "\nWARNING: Restoring will replace current data.\n";
+    std::cout << "Type Y to confirm restoration: ";
+
+    std::string confirmation;
+
+    if (!std::getline(std::cin, confirmation)) {
+        return false;
+    }
+
+    const auto result = backupService.restoreBackup(
+        session,
+        backups[static_cast<std::size_t>(selectedBackup - 1)]
+            .filename().string(),
+        confirmation);
+
+    std::cout << result.message << "\n";
+    return true;
+}
+
+bool processMenuAction(
+    int choiceNumber,
+    srm::AuthService& authService,
+    const srm::StudentService& studentService,
+    srm::AttendanceService& attendanceService,
+    srm::BackupService& backupService,
+    srm::AuditService& auditService,
+    srm::Session& session) {
+
+    if (srm::isSessionExpired(session)) {
+        session.authenticated = false;
+
+        auditService.logOperation(
+            session, "SESSION_EXPIRED", session.username, true,
+            "Session timed out due to 5 minutes inactivity");
+
+        std::cout << "\nSession expired due to 5 minutes inactivity.\n";
+        std::cout << "Please log in again.\n";
+        return false;
+    }
+
+    std::cout << "Action " << choiceNumber << " selected.\n";
+
+    auditService.logOperation(
+        session, "MENU_ACTION",
+        "Option_" + std::to_string(choiceNumber), true);
+
+    if (choiceNumber == 1 &&
+        session.role == srm::Role::Administrator) {
+        manageUsersMenu(authService, session);
+    }
+    else if (choiceNumber == 2 &&
+             session.role == srm::Role::Administrator) {
+        const auto students = studentService.searchStudents(session, "");
+        std::cout << "Current registered student count: "
+                  << students.size() << "\n";
+    }
+    else if (choiceNumber == 4 &&
+             session.role == srm::Role::Administrator) {
+
+        std::cout << "\nCreating system backup...\n";
+
+        const auto result = backupService.createBackup(session);
+
+        std::cout << result.message << "\n";
+    }
+    else if (choiceNumber == 5 &&
+             session.role == srm::Role::Administrator) {
+
+        if (!restoreBackupFromMenu(backupService, session)) {
+            return false;
+        }
+    }
+    else if (choiceNumber == 4 &&
+             session.role == srm::Role::Teacher) {
+        if (!markStudentAttendance(attendanceService, session)) {
+            return false;
+        }
+    }
+
+    session.lastActivity = std::chrono::steady_clock::now();
+    return true;
+}
+
+bool runAuthenticatedSession(
+    srm::AuthService& authService,
+    const srm::StudentService& studentService,
+    srm::AttendanceService& attendanceService,
+    srm::BackupService& backupService,
+    srm::AuditService& auditService,
+    srm::Session& session) {
+
+    while (session.authenticated) {
+        std::cout << "\nEnter your choice: ";
+
+        std::string choice;
+        if (!std::getline(std::cin, choice)) {
+            return false;
+        }
+
+        int choiceNumber = 0;
+        const int maxChoice =
+            session.role == srm::Role::Administrator ? 5 :
+            session.role == srm::Role::Teacher ? 4 : 3;
+
+        if (!srm::InputValidator::parseInteger(choice, choiceNumber) ||
+            !srm::InputValidator::validateRange(
+                choiceNumber, 1, maxChoice)) {
+            std::cout << "Invalid choice. Please enter a number between 1 and "
+                      << maxChoice << ".\n";
+            continue;
+        }
+
+        if (!processMenuAction(
+                choiceNumber, authService, studentService,
+                attendanceService, backupService,
+                auditService, session)) {
+            break;
+        }
+    }
+
+    return true;
+}
+
+int main() {
     srm::AuditService auditService("data/audit.log");
 
-    // Initialize backup and restore service (SRM-F-041, SRM-F-042)
     srm::BackupService backupService(
         "data",
         "backups",
-        &auditService
-    );
+        &auditService);
 
-    // Route RBAC security events to the audit service
     srm::AccessController::setEventLogger(
         [&auditService](const srm::SecurityEvent& ev) {
             auditService.logSecurityViolation(
-                ev,
-                ev.username.empty() ? "anonymous" : ev.username
-            );
-        }
-    );
+                ev, ev.username.empty() ? "anonymous" : ev.username);
+        });
 
-    // Initialize authentication service
     srm::AuthService authService("data/users.txt");
     authService.setAuditService(&auditService);
 
-    // Initialize student service
+    int setupExitCode = 0;
+
+    if (!createInitialAdminIfNeeded(authService, setupExitCode)) {
+        return setupExitCode;
+    }
+
     srm::StudentService studentService("data/students.txt");
     studentService.setAuditService(&auditService);
 
+    srm::AttendanceService attendanceService(
+        "data/attendance.txt",
+        [&studentService](const std::string& rollNumber) {
+            return studentService.exists(rollNumber);
+        });
+
     while (true) {
-        std::string username;
-        std::string password;
+        srm::Session session;
+        int loginExitCode = 0;
 
-        std::cout << "\nStudent Record System\n";
-        std::cout << "Username: ";
-
-        if (!std::getline(std::cin, username)) {
-            return 0;
+        if (!promptLogin(authService, session, loginExitCode)) {
+            return loginExitCode;
         }
-
-        std::cout << "Password: ";
-
-        if (!std::getline(std::cin, password)) {
-            return 0;
-        }
-
-        srm::LoginResult result = authService.login(username, password);
-
-        if (!result.success) {
-            std::cout << "\n" << result.message << "\n";
-            std::cout << "Login failed.\n";
-            return 1;
-        }
-
-        srm::Session session = result.session;
 
         displayMenu(session);
 
-        while (session.authenticated) {
-
-            std::cout << "\nEnter your choice: ";
-
-            std::string choice;
-
-            if (!std::getline(std::cin, choice)) {
-                return 0;
-            }
-
-            // Administrators have five menu options.
-            // Teachers and students have three.
-            const int maxChoice =
-                session.role == srm::Role::Administrator ? 5 : 3;
-
-            int choiceNumber = 0;
-
-            if (!srm::InputValidator::parseInteger(
-                    choice, choiceNumber) ||
-                !srm::InputValidator::validateRange(
-                    choiceNumber, 1, maxChoice)) {
-
-                std::cout << "Invalid menu choice. Please try again.\n";
-                continue;
-            }
-
-            // Check session expiration
-            if (srm::isSessionExpired(session)) {
-
-                session.authenticated = false;
-
-                auditService.logOperation(
-                    session,
-                    "SESSION_EXPIRED",
-                    session.username,
-                    true,
-                    "Session timed out due to 5 minutes inactivity"
-                );
-
-                std::cout << "\nSession expired due to 5 minutes of inactivity.\n";
-                std::cout << "Please log in again.\n";
-
-                break;
-            }
-
-            std::cout << "Action " << choiceNumber << " selected.\n";
-
-            auditService.logOperation(
-                session,
-                "MENU_ACTION",
-                "Option_" + std::to_string(choiceNumber),
-                true
-            );
-
-            // Option 2: Manage students
-            if (choiceNumber == 2 &&
-                session.role == srm::Role::Administrator) {
-
-                const auto students =
-                    studentService.searchStudents(session, "");
-
-                std::cout << "Current registered student count: "
-                          << students.size() << "\n";
-            }
-
-            // SRM-F-041: Create Backup
-            if (choiceNumber == 4 &&
-                session.role == srm::Role::Administrator) {
-
-                std::cout << "\nCreating system backup...\n";
-
-                const auto backupResult =
-                    backupService.createBackup(session);
-
-                std::cout << backupResult.message << "\n";
-            }
-
-            // SRM-F-042: Restore Backup
-            if (choiceNumber == 5 &&
-                session.role == srm::Role::Administrator) {
-
-                const auto backups = backupService.listBackups();
-
-                if (backups.empty()) {
-
-                    std::cout << "\nNo backups available.\n";
-
-                } else {
-
-                    std::cout << "\nAvailable Backups:\n";
-
-                    for (std::size_t i = 0; i < backups.size(); ++i) {
-                        std::cout << i + 1 << ". "
-                                  << backups[i].filename().string()
-                                  << "\n";
-                    }
-
-                    std::cout << "\nSelect backup number: ";
-
-                    std::string backupChoice;
-
-                    if (!std::getline(std::cin, backupChoice)) {
-                        return 0;
-                    }
-
-                    int selectedBackup = 0;
-
-                    if (!srm::InputValidator::parseInteger(
-                            backupChoice, selectedBackup) ||
-                        selectedBackup < 1 ||
-                        selectedBackup >
-                            static_cast<int>(backups.size())) {
-
-                        std::cout << "Invalid backup selection.\n";
-
-                    } else {
-
-                        std::cout
-                            << "\nWARNING: Restoring will replace current data.\n";
-
-                        std::cout
-                            << "Type Y to confirm restoration: ";
-
-                        std::string confirmation;
-
-                        if (!std::getline(std::cin, confirmation)) {
-                            return 0;
-                        }
-
-                        const auto restoreResult =
-                            backupService.restoreBackup(
-                                session,
-                                backups[selectedBackup - 1]
-                                    .filename().string(),
-                                confirmation
-                            );
-
-                        std::cout << restoreResult.message << "\n";
-                    }
-                }
-            }
-
-            // Update session activity timestamp
-            session.lastActivity =
-                std::chrono::steady_clock::now();
+        if (!runAuthenticatedSession(
+                authService, studentService, attendanceService,
+                backupService, auditService, session)) {
+            return 0;
         }
     }
 
     return 0;
 }
-

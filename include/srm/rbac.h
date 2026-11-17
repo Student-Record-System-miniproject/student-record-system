@@ -36,11 +36,11 @@ enum class Operation {
 };
 
 struct SecurityEvent {
-    Role role;
-    Operation operation;
+    Role role = Role::Student;
+    Operation operation = Operation::ChangeOwnPassword;
     std::string studentRollNumber;
     std::string targetResource;
-    bool authorized;
+    bool authorized = false;
     std::string reason;
     std::string username = "";
 };

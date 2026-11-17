@@ -12,6 +12,15 @@ void testValidText() {
     assert(InputValidator::validateText("Computer Science"));
     assert(InputValidator::validateText("alice@example.com"));
 }
+void testPasswordValidation() {
+    assert(InputValidator::validatePassword("abc12345"));
+    assert(InputValidator::validatePassword("A1bcdefg"));
+
+    assert(!InputValidator::validatePassword("abcdefgh"));
+    assert(!InputValidator::validatePassword("12345678"));
+    assert(!InputValidator::validatePassword("abc123"));
+    assert(!InputValidator::validatePassword(""));
+}
 
 void testEmptyTextRejected() {
     assert(!InputValidator::validateText(""));
@@ -74,6 +83,37 @@ void testConfirmation() {
     assert(!InputValidator::validateConfirmation("X"));
 }
 
+void testDateOfBirthValidation() {
+    // Valid dates
+    assert(InputValidator::validateDateOfBirth("2005-04-12"));
+    assert(InputValidator::validateDateOfBirth("2004-02-29"));
+    assert(InputValidator::validateDateOfBirth("2000-02-29"));
+
+    // Invalid formats
+    assert(!InputValidator::validateDateOfBirth("12-04-2005"));
+    assert(!InputValidator::validateDateOfBirth("2005/04/12"));
+    assert(!InputValidator::validateDateOfBirth("2005-4-12"));
+    assert(!InputValidator::validateDateOfBirth(""));
+
+    // Invalid calendar dates
+    assert(!InputValidator::validateDateOfBirth("2005-02-29"));
+    assert(!InputValidator::validateDateOfBirth("2005-13-01"));
+    assert(!InputValidator::validateDateOfBirth("2005-04-31"));
+    assert(!InputValidator::validateDateOfBirth("2005-00-12"));
+}
+
+void testContactNumberValidation() {
+    // Valid contact number
+    assert(InputValidator::validateContactNumber("9876543210"));
+
+    // Invalid contact numbers
+    assert(!InputValidator::validateContactNumber("12345"));
+    assert(!InputValidator::validateContactNumber("987654321"));
+    assert(!InputValidator::validateContactNumber("98765432101"));
+    assert(!InputValidator::validateContactNumber("98765AB210"));
+    assert(!InputValidator::validateContactNumber(""));
+}
+
 }  // namespace
 
 int main() {
@@ -85,6 +125,8 @@ int main() {
     testMalformedIntegerRejected();
     testIntegerRange();
     testConfirmation();
-
+    testDateOfBirthValidation();
+    testContactNumberValidation();
+    testPasswordValidation();
     return 0;
 }

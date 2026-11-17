@@ -4,12 +4,24 @@
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
-#include <random>
+#include <fstream>
+#include <limits>
+#include <stdexcept>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#endif
 #include <sstream>
 #include <vector>
 
 namespace srm {
 namespace {
+
+#ifndef _WIN32
 
 // Standard SHA-256 implementation conforming to FIPS 180-4 / RFC 6234
 class Sha256 {
@@ -83,22 +95,21 @@ private:
     static inline uint32_t gam1(uint32_t x) {
         return rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10);
     }
+    inline static constexpr uint32_t K[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
+        0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+        0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+        0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+        0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    };
 
     void transform(const uint8_t* block) {
-        static const uint32_t K[64] = {
-            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
-            0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-            0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-            0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
-            0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-            0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-            0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-            0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-            0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-        };
-
         std::array<uint32_t, 64> w{};
         for (int i = 0; i < 16; ++i) {
             w[i] = (static_cast<uint32_t>(block[i * 4]) << 24) |
@@ -183,29 +194,124 @@ std::array<uint8_t, 32> hmacSha256(const uint8_t* key, size_t keyLen,
     return output;
 }
 
-// Standard PBKDF2 with HMAC-SHA256 conforming to RFC 2898 / RFC 8018
-std::array<uint8_t, 32> pbkdf2HmacSha256(const std::string& password,
-                                         const std::vector<uint8_t>& salt,
-                                         unsigned int iterations) {
-    // Generate block 1 (32 bytes derived key)
+#endif
+
+#ifdef _WIN32
+
+void validateWindowsPbkdf2Input(
+    const std::string& password,
+    const std::vector<uint8_t>& salt) {
+
+    if (password.size() > std::numeric_limits<ULONG>::max() ||
+        salt.size() > std::numeric_limits<ULONG>::max()) {
+        throw std::length_error("Password or salt is too large.");
+    }
+}
+
+std::array<uint8_t, 32> deriveWindowsPbkdf2(
+    const std::string& password,
+    const std::vector<uint8_t>& salt,
+    unsigned int iterations) {
+
+    validateWindowsPbkdf2Input(password, salt);
+
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+
+    NTSTATUS status = BCryptOpenAlgorithmProvider(
+        &algorithm,
+        BCRYPT_SHA256_ALGORITHM,
+        nullptr,
+        BCRYPT_ALG_HANDLE_HMAC_FLAG
+    );
+
+    if (status < 0) {
+        throw std::runtime_error(
+            "Failed to initialize Windows SHA-256 provider."
+        );
+    }
+
+    std::array<uint8_t, 32> result{};
+
+    status = BCryptDeriveKeyPBKDF2(
+        algorithm,
+        reinterpret_cast<PUCHAR>(
+            const_cast<char*>(password.data())),
+        static_cast<ULONG>(password.size()),
+        reinterpret_cast<PUCHAR>(
+            const_cast<uint8_t*>(salt.data())),
+        static_cast<ULONG>(salt.size()),
+        static_cast<ULONGLONG>(iterations),
+        result.data(),
+        static_cast<ULONG>(result.size()),
+        0
+    );
+
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+
+    if (status < 0) {
+        throw std::runtime_error(
+            "Windows PBKDF2-HMAC-SHA256 derivation failed."
+        );
+    }
+
+    return result;
+}
+#else
+std::array<uint8_t, 32> derivePortablePbkdf2(
+    const std::string& password,
+    const std::vector<uint8_t>& salt,
+    unsigned int iterations) {
+
+    std::array<uint8_t, 32> result{};
+
     std::vector<uint8_t> saltAndIndex = salt;
     saltAndIndex.push_back(0);
     saltAndIndex.push_back(0);
     saltAndIndex.push_back(0);
-    saltAndIndex.push_back(1);  // block index = 1
+    saltAndIndex.push_back(1);
 
-    const auto* pwdBytes = reinterpret_cast<const uint8_t*>(password.data());
-    auto u = hmacSha256(pwdBytes, password.size(), saltAndIndex.data(), saltAndIndex.size());
-    auto result = u;
+    const auto* pwdBytes =
+        reinterpret_cast<const uint8_t*>(password.data());
+
+    auto u = hmacSha256(
+        pwdBytes, password.size(),
+        saltAndIndex.data(), saltAndIndex.size()
+    );
+
+    result = u;
 
     for (unsigned int iter = 1; iter < iterations; ++iter) {
-        u = hmacSha256(pwdBytes, password.size(), u.data(), u.size());
-        for (size_t b = 0; b < 32; ++b) {
+        u = hmacSha256(
+            pwdBytes, password.size(),
+            u.data(), u.size()
+        );
+
+        for (size_t b = 0; b < result.size(); ++b) {
             result[b] ^= u[b];
         }
     }
 
     return result;
+}
+#endif
+
+// Standard PBKDF2 with HMAC-SHA256 conforming to RFC 2898 / RFC 8018
+
+std::array<uint8_t, 32> pbkdf2HmacSha256(
+    const std::string& password,
+    const std::vector<uint8_t>& salt,
+    unsigned int iterations) {
+
+    if (iterations == 0) {
+        throw std::invalid_argument(
+            "PBKDF2 iterations must be greater than zero.");
+    }
+
+#ifdef _WIN32
+    return deriveWindowsPbkdf2(password, salt, iterations);
+#else
+    return derivePortablePbkdf2(password, salt, iterations);
+#endif
 }
 
 std::string bytesToHex(const uint8_t* data, size_t length) {
@@ -232,11 +338,40 @@ std::vector<uint8_t> hexToBytes(const std::string& hex) {
 }  // namespace
 
 std::string Crypto::generateSaltHex(std::size_t lengthBytes) {
-    std::random_device rd;
-    std::vector<uint8_t> salt(lengthBytes);
-    for (size_t i = 0; i < lengthBytes; ++i) {
-        salt[i] = static_cast<uint8_t>(rd() & 0xFF);
+    if (lengthBytes == 0) {
+        throw std::invalid_argument("Salt length must be greater than zero.");
     }
+
+    std::vector<uint8_t> salt(lengthBytes);
+
+#ifdef _WIN32
+    if (lengthBytes > std::numeric_limits<ULONG>::max()) {
+        throw std::length_error("Salt length is too large.");
+    }
+
+    // Use the Windows system-preferred cryptographic random generator.
+    const NTSTATUS status = BCryptGenRandom(
+        nullptr,
+        salt.data(),
+        static_cast<ULONG>(salt.size()),
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG
+    );
+
+    if (status < 0) {
+        throw std::runtime_error("Failed to generate cryptographically secure salt.");
+    }
+#else
+    // Use the operating system's random source on Unix-like platforms.
+    std::ifstream randomSource("/dev/urandom", std::ios::binary);
+
+    if (!randomSource ||
+        !randomSource.read(
+            reinterpret_cast<char*>(salt.data()),
+            static_cast<std::streamsize>(salt.size()))) {
+        throw std::runtime_error("Failed to generate cryptographically secure salt.");
+    }
+#endif
+
     return bytesToHex(salt.data(), salt.size());
 }
 
