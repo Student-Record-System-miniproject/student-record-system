@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(srm_core
     src/common_types.cpp
+    src/directory_security.cpp
     src/crypto.cpp
     src/audit_service.cpp
     src/storage_utils.cpp
@@ -98,6 +99,15 @@ add_executable(performance_capacity_tests
     tests/performance_capacity_tests.cpp
 )
 target_link_libraries(performance_capacity_tests PRIVATE srm_core)
+
+add_executable(directory_security_tests
+    tests/directory_security_tests.cpp
+)
+target_link_libraries(directory_security_tests PRIVATE srm_core)
+
+if (WIN32)
+    target_link_libraries(srm_core PUBLIC advapi32)
+endif()
 enable_testing()
 
 add_test(NAME grade_service_tests COMMAND grade_service_tests)
@@ -111,3 +121,4 @@ add_test(NAME crash_safe_saving_tests COMMAND crash_safe_saving_tests)
 add_test(NAME input_validator_tests COMMAND input_validator_tests)
 add_test(NAME backup_service_tests COMMAND backup_service_tests)
 add_test(NAME performance_capacity_tests COMMAND performance_capacity_tests)
+add_test(NAME directory_security_tests COMMAND directory_security_tests)
