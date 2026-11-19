@@ -156,8 +156,8 @@ Every task assigned to Sanjana aligns with the priority levels specified in the 
 
 ### Summary of Sanjana's Priority Distribution
 
-- **High Priority Work:** 5 Story Points (Persistent storage, report-card access control, attendance calculations and final integration).
+- **High Priority Work:** 13 Story Points (Persistent storage, report-card access control, attendance calculations and final integration).
 - **Medium Priority Work:** 17 Story Points (Password management, attendance calculations, backup and restore, OS-level permissions and console usability).
 - **Low Priority Work:** 0 Story Points.
 
-**Total Contribution: 22 Story Points (8 issues, all CLOSED).**
+**Total Contribution: 30 Story Points (8 issues, all CLOSED).**
