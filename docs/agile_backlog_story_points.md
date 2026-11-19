@@ -69,10 +69,10 @@ Story points are assigned using the Fibonacci sequence:
 | **#25** | `SRM-SR-006` | Protect data files and backup directories with OS permissions | Medium | `sanjanaaravamudhan` | 3 | #64 / #73 | **CLOSED** |
 | **#26** | `SRM-NF-003` | Implement crash-safe atomic data saving and recovery | **High** | `sidducs` | 5 | #44 | **CLOSED** |
 | **#27** | `SRM-NF-001, 002, 007` | Verify performance and data capacity (10k students, 100k grades) | High / Med | `sufiyakhanam` | 5 | #60 / #67 | **CLOSED** |
-| **#28** | `SRM-NF-004` | Improve console usability and actionable error messages | Medium | `sanjanaaravamudhan` | 3 | #65 | **IN PROGRESS** |
+| **#28** | `SRM-NF-004` | Improve console usability and actionable error messages | Medium | `sanjanaaravamudhan` | 3 | #65 | **CLOSED** |
 | **#29** | `SRM-NF-005` | Windows & Ubuntu 22.04 portability and dual-OS CI pipeline | **Medium** | `sidducs` | 2 | #46 | **CLOSED** |
 | **#30** | `SRM-NF-006` | Refactor for maintainability (<= 50 line functions, >= 80% coverage) | Medium | `sufiyakhanam` | 5 | #63 / #67 | **CLOSED** |
-| **#31** | `SRM-F/NF/SR` | Complete final integration, security, and regression testing | High | `sanjanaaravamudhan` | 8 | #66 | **FINAL REVIEW** |
+| **#31** | `SRM-F/NF/SR` | Complete final integration, security, and regression testing | High | `sanjanaaravamudhan` | 8 | #66 | **CLOSED** |
 
 **Sprint 2 Total Story Points:** **51 Points**
 
