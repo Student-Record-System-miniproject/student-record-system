@@ -83,8 +83,8 @@ Story points are assigned using the Fibonacci sequence:
 | Team Member | Sprint 1 Points | Sprint 2 Points | Total Story Points | Contribution Share |
 | :--- | :---: | :---: | :---: | :---: |
 | **Siddu Shirasagi (`sidducs`)** | 18 | 17 | **35 Points** | 33.7% |
-| **Sufiya Khanam (`sufiyakhanam`)** | 21 | 26 | **47 Points** | 45.2% |
-| **Sanjana Aravamudhan (`sanjanaaravamudhan`)** | 14 | 8 | **22 Points** | 21.2% |
+| **Sufiya Khanam (`sufiyakhanam`)** | 21 | 15 | **36 Points** | 34.6% |
+| **Sanjana Aravamudhan (`sanjanaaravamudhan`)** | 14 | 19 | **33 Points** | 31.7% |
 | **Total** | **53 Points** | **51 Points** | **104 Points** | **100%** |
 
 ---
