@@ -457,7 +457,7 @@ LoginStatus promptLogin(srm::AuthService& authService, srm::Session& session) {
                   << "      STUDENT RECORD SYSTEM\n"
                   << "================================\n";
 
-        if (!readLine("Enter username (or type EXIT to quit): ", username)) {
+        if (!readLine("Username: (type EXIT to quit): ", username)) {
             return LoginStatus::Exit;
         }
         if (username == "EXIT" || username == "exit") {
