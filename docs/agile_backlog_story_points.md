@@ -34,7 +34,7 @@ Story points are assigned using the Fibonacci sequence:
 | Issue # | Requirement ID | User Story / Task Description | SRS Priority | Assignee | Story Points | PR # | Status |
 | :---: | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
 | **#1** | `SRM-NF-005, 006` | Set up C++17 project structure, CMake build, and file repository | Medium | `sufiyakhanam` | 5 | #42 | **CLOSED** |
-| **#4** | `SRM-F-001` | Implement user authentication for Admin, Teacher, Student roles | High | `sanjanaaravamudhan` | 3 | #42 | **CLOSED** |
+| **#33** | `SRM-F-001` | Implement user authentication for Admin, Teacher, Student roles | High | `sufiyakhanam` | 3 | #42 | **CLOSED** |
 | **#6** | `SRM-F-003` | Implement session timeout after 5 minutes of inactivity | Medium | `sufiyakhanam` | 2 | #43 | **CLOSED** |
 | **#7** | `SRM-F-004` | Implement authenticated password change with strength validation | Medium | `sanjanaaravamudhan` | 3 | #52 / #68 | **CLOSED** |
 | **#8** | `SRM-SR-002` | Implement Role-Based Access Control (RBAC) engine | **High** | `sidducs` | 3 | #38 | **CLOSED** |
@@ -83,8 +83,8 @@ Story points are assigned using the Fibonacci sequence:
 | Team Member | Sprint 1 Points | Sprint 2 Points | Total Story Points | Contribution Share |
 | :--- | :---: | :---: | :---: | :---: |
 | **Siddu Shirasagi (`sidducs`)** | 18 | 17 | **35 Points** | 33.7% |
-| **Sufiya Khanam (`sufiyakhanam`)** | 21 | 15 | **36 Points** | 34.6% |
-| **Sanjana Aravamudhan (`sanjanaaravamudhan`)** | 14 | 19 | **33 Points** | 31.7% |
+| **Sufiya Khanam (`sufiyakhanam`)** | 21 | 26 | **47 Points** | 45.2% |
+| **Sanjana Aravamudhan (`sanjanaaravamudhan`)** | 14 | 8 | **22 Points** | 21.2% |
 | **Total** | **53 Points** | **51 Points** | **104 Points** | **100%** |
 
 ---
@@ -112,3 +112,52 @@ Every task assigned to Siddu strictly aligns with the priority levels specified 
 * **Medium Priority Work:** **9 Story Points** (Student updates/deletions, marks updates, attendance view, portability).
 * **Low Priority Work:** **2 Story Points** (File exports).
 * **Total Contribution:** **35 Story Points (100% Verified & Delivered)**.
+
+## 6. Sufiya Khanam (`sufiyakhanam`) Assigned Work by SRS Priority Level
+
+The following tasks are assigned to Sufiya Khanam in the project backlog. Issue assignments and linked pull requests are based on the GitHub Projects backlog provided.
+
+| Issue # | Requirement ID | Task / Capability | SRS Priority Level | Story Points | Pull Request |
+| :---: | :--- | :--- | :---: | :---: | :---: |
+| **#1** | `SRM-NF-005, SRM-NF-006` | C++17 Project Structure, CMake Build & File-Based Storage | **Medium** | 5 | PR #41, #42 |
+| **#33** | `SRM-F-001` | User Authentication for Administrator, Teacher and Student Roles | **High** | 3 | PR #42 |
+| **#6** | `SRM-F-003` | Session Timeout After 5 Minutes of Inactivity | **Medium** | 2 | PR #43 |
+| **#9** | `SRM-SR-004` | Secure Input Validation Across the Service Layer | **High** | 3 | PR #47, #57 |
+| **#10** | `SRM-F-010, SRM-F-011` | Student Creation & Duplicate Roll-Number Rejection | **High** | 3 | PR #48, #57 |
+| **#12** | `SRM-F-014, SRM-F-015` | Student Search (Exact Roll / Partial Name) & Sorted Listing | **High / Low** | 3 | PR #49 |
+| **#15** | `SRM-F-022` | Semester and Overall Percentage, Letter Grade & GPA Calculation | **High** | 5 | PR #50 |
+| **#18** | `SRM-F-030` | Teacher Attendance Marking with Date Validation | **High** | 3 | PR #56 |
+| **#21** | `SRM-F-040` | Administrator User Account Management and Deactivation | **High** | 5 | PR #58, #67 |
+| **#24** | `SRM-SR-001, SRM-SR-007` | Secure Password Storage (Salted PBKDF2) & Terminal Password Masking | **High** | 5 | PR #59 |
+| **#27** | `SRM-NF-001, SRM-NF-002, SRM-NF-007` | Performance and Data-Capacity Verification | **High / Medium** | 5 | PR #60 |
+| **#30** | `SRM-NF-006` | Maintainability Refactoring and Unit-Test Coverage Verification | **Medium** | 5 | PR #63, #67 |
+
+### Summary of Sufiya's Priority Distribution
+
+- **High-priority-only tasks:** **27 Story Points** — authentication, input validation, student creation, grade calculation, attendance marking, account administration, and secure password handling.
+- **Medium-priority-only tasks:** **12 Story Points** — project setup, session timeout, and maintainability.
+- **Mixed-priority tasks:** **8 Story Points** — student search/sorted listing (#12) and performance/capacity verification (#27), which cover requirements with more than one SRS priority.
+- **Total assigned task estimates:** **47 Story Points** across 12 issues.
+
+  ## 7. Sanjana Aravamudhan (`sanjanaaravamudhan`) Assigned Work by SRS Priority Level
+
+Every task assigned to Sanjana aligns with the priority levels specified in the SRS. The following table summarizes her contributions across both sprints, including the associated requirements, story points, and pull requests.
+
+| Issue # | Requirement ID | Task / Capability | SRS Priority Level | Story Points | Pull Request |
+| :---: | :--- | :--- | :---: | :---: | :---: |
+| **#7** | `SRM-F-004` | Authenticated Password Change with Strength Validation | Medium | 3 | PR #52, #68 |
+| **#13** | `SRM-F-043` | Persistent Storage and Restart Verification | High | 3 | PR #53, #69 |
+| **#16** | `SRM-F-023` | Student Report Card Access Control (Own Record Only) | High | 2 | PR #54, #70 |
+| **#19** | `SRM-F-031, SRM-F-032` | Attendance Percentage Calculation and Low Attendance Flagging (<75%) | High / Medium | 3 | PR #55, #71 |
+| **#22** | `SRM-F-041, SRM-F-042` | Full Data Backup and Restore with Archive Integrity | Medium | 5 | PR #62, #72 |
+| **#25** | `SRM-SR-006` | OS-Level Permissions for Data Files and Backup Directories | Medium | 3 | PR #64, #73 |
+| **#28** | `SRM-NF-004` | Console Usability Improvements and Actionable Error Messages | Medium | 3 | PR #65 |
+| **#31** | `SRM-F/NF/SR` | Final Integration, Security and Regression Testing | High | 8 | PR #66 |
+
+### Summary of Sanjana's Priority Distribution
+
+- **High Priority Work:** 5 Story Points (Persistent storage, report-card access control, attendance calculations and final integration).
+- **Medium Priority Work:** 17 Story Points (Password management, attendance calculations, backup and restore, OS-level permissions and console usability).
+- **Low Priority Work:** 0 Story Points.
+
+**Total Contribution: 22 Story Points (8 issues, all CLOSED).**
